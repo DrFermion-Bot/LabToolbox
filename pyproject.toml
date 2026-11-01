@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "labtoolbox"
-version = "0.1.12"
+version = "0.1.13"
 description = "实验室工具箱 - Biomedical lab analysis tools (growth curves, LIPSS/DLOA, XDLVO, LIVE/DEAD, contact angle)"
 readme = "README.md"
 requires-python = ">=3.9"
