@@ -73,6 +73,12 @@ TRANSLATIONS = {
     "通道 (空=自动)": "Channel (blank=auto)",
     "像素尺寸 X (nm, 空=自动)": "Pixel size X (nm, blank=auto)",
     "🚀 运行表面分析": "🚀 Run surface analysis",
+    "🧭 织构一致性": "🧭 Texture Consistency",
+    "SEM 织构一致性与合格区面积": "SEM texture consistency & ordered-area map",
+    "SEM 图像根目录（子文件夹=分组）": "SEM root folder (sub-folders = groups)",
+    "像素尺寸 nm（空=自动）": "Pixel size nm (blank = auto)",
+    "分块边长 (px)": "Tile edge (px)",
+    "🚀 运行一致性分析": "🚀 Run consistency analysis",
 }
 
 

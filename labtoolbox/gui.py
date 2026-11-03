@@ -18,6 +18,7 @@ from labtoolbox.livedead import run as ld_run
 from labtoolbox.contact_angle import run as ca_run
 from labtoolbox.livedead_cellcounter import run as ldc_run
 from labtoolbox.surfmetrics import run as sm_run
+from labtoolbox.semtexture import run as stx_run
 from labtoolbox.i18n import tr
 
 
@@ -207,6 +208,7 @@ class LabToolboxApp:
         self._build_contact_tab()
         self._build_livedead_counter_tab()
         self._build_surfmetrics_tab()
+        self._build_semtexture_tab()
 
     def _build_growth_tab(self):
         tab = ttk.Frame(self.notebook)
@@ -259,6 +261,41 @@ class LabToolboxApp:
                              dloa_run, folder=self.dloa_folder.get(),
                              output_dir=self.dloa_out.get(),
                              pixel_size_um=1.0 / float(self.dloa_ppm.get())))
+
+    def _build_semtexture_tab(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=tr("🧭 织构一致性", self.lang))
+        self._notebook_tabs.append((tab, "🧭 织构一致性"))
+        inner = ttk.LabelFrame(tab, text=tr("SEM 织构一致性与合格区面积", self.lang))
+        inner.pack(fill="both", expand=True, padx=10, pady=10)
+        self._widgets.append((inner, "SEM 织构一致性与合格区面积"))
+
+        self.stx_folder = tk.StringVar()
+        self._folder_row(inner, "SEM 图像根目录（子文件夹=分组）", self.stx_folder)
+
+        row = ttk.Frame(inner)
+        row.pack(fill="x", pady=4)
+        for label, var, width, key in [
+                ("像素尺寸 nm（空=自动）", "31.25", 10, "像素尺寸 nm（空=自动）"),
+                ("分块边长 (px)", "256", 8, "分块边长 (px)")]:
+            lbl = ttk.Label(row, text=tr(label, self.lang), width=22)
+            lbl.pack(side="left")
+            self._widgets.append((lbl, key))
+            v = tk.StringVar(value=var)
+            ttk.Entry(row, textvariable=v, width=width).pack(side="left", padx=(0, 12))
+            if key.startswith("像素"):
+                self.stx_pxnm = v
+            else:
+                self.stx_tile = v
+
+        self.stx_out = tk.StringVar(value="output")
+        self._output_row(inner, self.stx_out)
+        self._run_button(inner, "🚀 运行一致性分析",
+                         lambda: self._run_async(
+                             stx_run, folder=self.stx_folder.get(),
+                             output_dir=self.stx_out.get(),
+                             pixel_nm=(float(self.stx_pxnm.get()) if self.stx_pxnm.get().strip() else None),
+                             tile=int(self.stx_tile.get() or 256)))
 
     def _build_xdlvo_tab(self):
         tab = ttk.Frame(self.notebook)

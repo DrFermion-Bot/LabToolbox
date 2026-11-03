@@ -34,6 +34,20 @@ def cmd_lipss_dloa(args):
     return 0
 
 
+def cmd_sem_texture(args):
+    from .semtexture import run as tex_run
+    result = tex_run(folder=args.folder, output_dir=args.output,
+                     pixel_nm=args.pixel_nm, tile=args.tile,
+                     figures=not args.no_figures)
+    print(f"✅ 织构一致性分析完成: {result['n_images']} 张图像, {len(result['stats'])} 组")
+    for s in result["stats"]:
+        print(f"   {s['group']}: Λ {s['period_mean_nm']:.1f} ± {s['period_sd_nm']:.1f} nm "
+              f"(CV {s['period_cv_pct']:.2f} %), θ SD {s['theta_sd_deg']:.1f}°, "
+              f"合格区 {s['ordered_mean_pct']:.0f} % → {s['verdict']}")
+    print(f"   报告: {result['markdown']}")
+    return 0
+
+
 def cmd_xdlvo(args):
     from .xdlvo import run as xd_run
     ca = json.loads(args.angles)
@@ -110,6 +124,7 @@ def cmd_schematic(args):
 COMMANDS = {
     "growth-curve": (cmd_growth_curve, "生长曲线分析 (OD600/CFU 拟合)"),
     "lipss-dloa": (cmd_lipss_dloa, "LIPSS/DLOA 取向角分析"),
+    "sem-texture": (cmd_sem_texture, "SEM 织构一致性: 周期/取向/有序度 + 合格区面积 + 批量一致性判据"),
     "xdlvo": (cmd_xdlvo, "XDLVO 细菌粘附预测"),
     "livedead": (cmd_livedead, "LIVE/DEAD 存活率统计"),
     "contact-angle": (cmd_contact_angle, "接触角/表面能计算"),
@@ -133,6 +148,14 @@ def build_parser():
     p.add_argument("--folder", required=True, help="SEM 图像文件夹")
     p.add_argument("--pixel-per-um", type=float, default=32.0, help="每微米像素数 (默认 32)")
     p.add_argument("--output", default="output", help="输出目录")
+
+    p = sub.add_parser("sem-texture", help=COMMANDS["sem-texture"][1])
+    p.add_argument("--folder", required=True, help="SEM 图像根目录 (子文件夹 = 分组, 如 LIPSS_regions)")
+    p.add_argument("--pixel-nm", type=float, default=None, dest="pixel_nm",
+                   help="像素尺寸 nm (默认读 JSM *.txt sidecar, 没有则 31.25 = 3k 图)")
+    p.add_argument("--tile", type=int, default=256, help="分块边长 (px, 默认 256)")
+    p.add_argument("--output", default="output", help="输出目录")
+    p.add_argument("--no-figures", action="store_true", help="不出分块分类图与汇总图")
 
     p = sub.add_parser("xdlvo", help=COMMANDS["xdlvo"][1])
     p.add_argument("--angles", required=True,

@@ -15,6 +15,7 @@
 | `livedead_cellcounter` | LIVE/DEAD fluorescence image cell counting (repeat/time/area, summary + ANOVA) | numpy, opencv, Pillow |
 | `contact_angle` | Contact angle / surface free energy (OWRK) | numpy, scipy |
 | `surfmetrics` | AFM/SEM height map → 3D + roughness (Sa/Sq/Sz) + surface area (Sdr) | numpy, scipy, tifffile, igor* |
+| `semtexture` | **Coupon-to-coupon consistency**: SEM period / orientation / coherence + tile-based ordered-area map + debris density + batch criteria (period CV, orientation SD, ICC) | numpy, scipy, pandas, matplotlib, Pillow |
 
 > *`igor` (Bruker .ibw direct read) must be installed from GitHub: `pip install "igor @ git+https://github.com/wking/igor"` (the PyPI `igor` package is an empty shell — do not install).
 

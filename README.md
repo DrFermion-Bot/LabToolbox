@@ -16,6 +16,7 @@ Ruinong Pan 的生物医学实验室分析工具集 — 将 OneDrive 共享文�
 | `contact_angle` | 接触角/表面自由能计算 (OWRK 等) | numpy, scipy |
 | `surfmetrics` | AFM/SEM 高度图 → 3D 图 + 粗糙度 (Sa/Sq/Sz) + 表面积 (Sdr) | numpy, scipy, tifffile, igor* |
 | `contact_schematic` | **AFM 流程末端**: 实测几何 (周期/纹深/尖峰间距/柱高) → 细菌黏附 3D 示意图 + 接触几何图 | numpy, scipy, matplotlib, igor* |
+| `semtexture` | **多块样品一致性**: SEM 织构周期/取向/相干度 + 分块合格区面积 + 缺陷密度 + 批量一致性判据 (周期 CV / 取向 SD / ICC) | numpy, scipy, pandas, matplotlib, Pillow |
 
 > *`igor` 用于 Bruker .ibw 直读, 需从 GitHub 安装: `pip install "igor @ git+https://github.com/wking/igor"` (PyPI 上的 `igor` 是空壳, 勿装)。
 
