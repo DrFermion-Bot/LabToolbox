@@ -55,7 +55,9 @@ met = pd.read_csv(os.path.join(OUT, "sem_texture_metrics.csv"), encoding="utf-8-
 con = pd.read_csv(os.path.join(OUT, "sem_texture_consistency.csv"), encoding="utf-8-sig")
 til = pd.read_csv(os.path.join(OUT, "sem_texture_tiles.csv"), encoding="utf-8-sig")
 
-TILE_PX = float(met["tile_px"].median()) if "tile_px" in met else 128.0
+TILE_PX = float(met["tile_px"].median()) if "tile_px" in met else 64.0
+TILE_UM = TILE_PX * float(met["pixel_nm"].median()) / 1000.0
+PPW = float(met["periods_per_window"].median()) if "periods_per_window" in met else float("nan")
 _t3k = til[til.group.isin(["LIPSS_regions", "nanopillar_regions"])]
 COLS = int(_t3k.groupby("file").x0.nunique().max())
 ROWS = int(_t3k.groupby("file").y0.nunique().max())
@@ -527,8 +529,9 @@ caption(doc, "Figure 1 — Period of the same six LIPSS images obtained by four 
 
 head(doc, "3.3  Ordered-area map and the ordered fraction", 2)
 para(doc,
-     f"Each field is cut into a **non-overlapping** grid of 4 µm × 4 µm windows ("
-     f"{TILE_PX:g} px on the 3 k images; {COLS} × {ROWS} = {COLS*ROWS} windows on the analysed area). "
+     f"Each field is cut into a **non-overlapping** grid of {TILE_UM:g} µm × {TILE_UM:g} µm windows ("
+     f"{TILE_PX:g} px on the 3 k images, ≈ {PPW:.1f} ripple periods; "
+     f"{COLS} × {ROWS} = {COLS*ROWS} windows on the analysed area). "
      "Every window is analysed exactly like a full image (C, θ, Λ, autocorrelation strength) and "
      "assigned to one of "
      "three classes. Let θ_{ref} be the modal tile orientation and Λ_{ref} the median tile period of that "
@@ -536,16 +539,21 @@ para(doc,
 add_eq(doc, msub(mr("f"), mr("ord")) + mr(" = ") +
         mfrac(msub(mr("A"), mr("ordered")), msub(mr("A"), mr("valid"))))
 para(doc,
-     "**ordered** — C ≥ C_{min}, |Λ − Λ_{ref}| / Λ_{ref} ≤ 10 %, |θ − θ_{ref}| ≤ 10° and the autocorrelation "
-     "strength ≥ 0.40 (a region that really carries the intended texture); "
+     "**ordered** — C ≥ C_{min}, |Λ − Λ_{ref}| / Λ_{ref} within the period band, |θ − θ_{ref}| ≤ 10° and the "
+     "autocorrelation strength at least 0.55 × the field median (a region that really carries the intended "
+     "texture); "
      "**disordered** — it has directional structure (C ≥ 0.15) but misses one of the above (spot edge, "
      "insufficient overlap, melt pool); "
      "**bare** — no usable directionality (C < 0.15) — unprocessed areas. "
+     "Two of those tests scale with the window instead of being fixed numbers, because the window sets the "
+     "precision: the period band is 3σ = 0.9/N (N = ripple periods inside one window), never tighter than "
+     "10 %, and the autocorrelation test is relative to the field's own median. Without that, shrinking the "
+     "window would flag good texture as defective purely because a "
+     f"{TILE_UM:g} µm window holds only ~{PPW:.1f} periods. "
      "Windows on the residual frame line are excluded from the denominator and reported separately. Because "
      "the windows do not overlap, A_ordered/A_valid is the area actually painted in the annotated copies. "
      "The window size is a physical quantity (µm), not a pixel count, so the same field is cut the same way "
-     "at 3 k and at 12 k; 4 µm corresponds to roughly ten ripple periods, which is the smallest window in "
-     "which the fundamental can still be fitted.")
+     "at any magnification.")
 para(doc, "The same tile table gives two further consistency numbers: the spread of the local period "
           "within a field, and the circular spread of the local orientation within a field. They quantify "
           "*uniformity inside a coupon*, whereas the between-coupon CV quantifies *reproducibility of the "
@@ -604,9 +612,9 @@ table(doc,
       ["Parameter", "single (grating)", "mixed (lattice)", "Rationale"],
       [["coherence C_{min} (ordered)", "0.45", "0.38", "≈ 80 % of the typical field coherence of that type"],
        ["coherence C_{min} (bare below)", "0.15", "0.12", "below this there is no directional structure at all"],
-       ["period tolerance", "±10 %", "±20 %", "grating: sampling quantisation (~±4 %) plus real scatter; lattice: the pillar spacing itself spans ±20 % (p10–p90)"],
+       ["period tolerance", "±10 % (auto)", "±20 % (auto)", "widened automatically to 3σ = 0.9/N periods when the window holds few periods; the lattice value also covers its own ±20 % p10–p90 spacing spread"],
        ["angle tolerance", "±10°", "±15°", "a rotated beam shows up far above this"],
-       ["autocorrelation strength", "≥ 0.40", "≥ 0.15", "phase coherence is type-specific; the mixed value is set from the observed distribution"]],
+       ["autocorrelation strength", "≥ 0.55 × field median", "≥ 0.55 × field median", "phase coherence falls with window size, so it is judged against the field (floors 0.10 / 0.08)"]],
       widths=[4.6, 3.0, 3.0, 6.4])
 caption(doc, "Table 1 — Tile thresholds (module defaults, overridable). All ten parameters live in "
              "`DEFAULT_QC` so a different process can be adopted without touching the code.")
@@ -695,13 +703,21 @@ para(doc,
      f"textured in every coupon; the nanopillar position loses about {100-gn.ordered_mean_pct:.0f} % of its "
      f"area, mostly to windows where the lattice cannot be assigned to either reference direction.")
 _worst = npil.sort_values("bare_frac").iloc[-1]
+_failed = [label for (label, key, op, lim, unit) in CHECKS if str(gn["chk_" + key]) == "FAIL"]
 para(doc,
-     f"**Verdict.** The LIPSS group passes all six checks. The nanopillar group passes five and fails the "
-     f"bare-area check: coupon {_worst['coupon']} has {100*_worst['bare_frac']:.0f} % of its field with no "
-     f"periodic texture at all (the limit is 10 %), i.e. a genuine unprocessed patch rather than a period or "
-     f"orientation error. That coupon should be re-inspected before it is used as a nanopillar sample; the "
-     f"other five are inside the criteria. This is the kind of statement the fine (4 µm) window made "
-     f"visible — with 8 µm windows the same patch occupied a single window and passed.")
+     f"**Verdict.** The LIPSS group passes all six checks. The nanopillar group fails "
+     f"{len(_failed)}: " + "; ".join(_failed) + ". The worst coupon is "
+     f"{_worst['coupon']} with {100*_worst['bare_frac']:.0f} % of its field carrying no periodic texture at all "
+     f"(limit 10 %) — a genuine unprocessed patch, not a period or orientation error — and it should be "
+     f"re-inspected before being used as a nanopillar sample.")
+para(doc,
+     f"**On the thresholds and the window size.** The batch limits were first written for an 8 µm window. "
+     f"With {TILE_UM:g} µm windows the same surfaces read systematically lower ({gl.ordered_mean_pct:.0f} % and "
+     f"{gn.ordered_mean_pct:.0f} % ordered) because a window holding only ~{PPW:.1f} periods locates the period "
+     f"to ~10 %, so a few percent of genuinely good windows still miss the band. The numbers in Table 2 are "
+     f"therefore comparable within this window size, not across window sizes: fix the window first, then set "
+     f"the pass/fail line. What does survive the change of window size is the contrast between the two "
+     f"positions — the LIPSS area is uniform, the nanopillar area is not.")
 para(doc,
      "**A group that must fail.** The folder `515-8_and_polished_surface` collects LIPSS, nanopillar and "
      "polished images at two magnifications. Run through the same criteria it fails every check "

@@ -68,8 +68,9 @@ __all__ = ["run", "analyse_image", "annotate_image", "annotate_folder",
 DEFAULT_PIXEL_NM = 31.25
 BAND_NM = (240.0, 800.0)          # admissible ripple periods
 TILE_PX = 256                      # fallback tile edge (px) when no physical size is given
-DEFAULT_TILE_UM = 4.0              # classification window in µm (128 px on the 3 k images:
-                                   # a quarter of the earlier 8 µm window)
+DEFAULT_TILE_UM = 2.0              # classification window in µm (64 px on the 3 k images:
+                                   # ~5.6 ripple periods, the smallest window that still
+                                   # yields a period estimate in >95 % of windows)
 TILE_STEP = None                   # non-overlapping: window fraction == area fraction
 HP_SIGMA_PX = 20                   # high-pass: removes illumination > ~0.6 µm
 
@@ -82,7 +83,11 @@ DEFAULT_QC = {
         "coherence_texture": 0.15,
         "period_tol": 0.10,
         "angle_tol_deg": 10.0,
-        "ac_strength": 0.40,
+        # the autocorrelation strength shrinks with the window size, so it is judged
+        # against the field's own median (is this window as periodic as the rest of the
+        # coupon?) with a small absolute floor instead of a fixed number.
+        "ac_rel": 0.55,
+        "ac_floor": 0.10,
     },
     "mixed": {                     # nanopillar / crossed lattice, periodic both ways
         "coherence_ordered": 0.38,
@@ -93,7 +98,8 @@ DEFAULT_QC = {
         # and on the autocorrelation, which are the properties that actually degrade.
         "period_tol": 0.20,
         "angle_tol_deg": 15.0,
-        "ac_strength": 0.15,
+        "ac_rel": 0.55,
+        "ac_floor": 0.08,
     },
 }
 
@@ -306,8 +312,8 @@ def _rasterise_classes(tiles, shape, tile):
     Returns an int8 array: -2 = no tile covers this pixel, -1 = excluded tile,
     0 = bare, 1 = disordered, 2 = ordered.  Fractions computed from this array are
     true area fractions of the field — which is what the annotated copies paint —
-    whereas counting tiles would over-weight isolated defects (one 256 px window is
-    5 % of a 1280 x 1024 frame).
+    whereas counting windows would over-weight isolated defects (one window is always
+    1/N of the sampled area regardless of how many tiles a defect touches).
     """
     cls = np.full(shape, -2, dtype=np.int8)
     prio_map = {0: 3, 1: 2, -1: 1, 2: 0}       # higher wins: bare > disordered > excluded > ordered
@@ -352,7 +358,8 @@ def analyse_image(path, pixel_nm=None, tile=None, step=None, qc=None,
                   tile_um=DEFAULT_TILE_UM):
     """Full metric set for one micrograph.
 
-    The classification window is given in **µm** (``tile_um``, default 4 µm) so that the
+    The classification window is given in **µm** (``tile_um``, default 2 µm = 64 px at 3 k,
+    ≈ 5.6 ripple periods) so that the
     same physical window is used at any magnification; ``tile`` overrides it in pixels.
     ``step`` defaults to the tile edge (non-overlapping), so the reported area fractions
     are exactly the painted area.
@@ -435,9 +442,16 @@ def analyse_image(path, pixel_nm=None, tile=None, step=None, qc=None,
     tiles = rows
     if tiles:
         valid = [t for t in tiles if t["valid"]]
+        ac_med = float(np.nanmedian([t["ac_strength"] for t in valid])) if valid else 0.0
         fams, mode = _families(hp, theta0, px, per, c_img)
         qc = dict(DEFAULT_QC[mode])
         qc.update({k: v for k, v in qc_override.items() if k in qc})
+        # period tolerance scales with the number of periods inside one window: a window
+        # holding N periods locates the fundamental to roughly 0.3/N, so the band is
+        # 3 sigma (0.9/N) but never tighter than the preset value.
+        n_per_win = ((tile * px / res["period_nm"])
+                     if np.isfinite(res["period_nm"]) and res["period_nm"] else 0.0)
+        tol_eff = max(qc["period_tol"], (0.9 / n_per_win) if n_per_win > 0 else qc["period_tol"])
         res["mode"] = mode
         for t in tiles:
             if not t["valid"]:
@@ -461,9 +475,9 @@ def analyse_image(path, pixel_nm=None, tile=None, step=None, qc=None,
             t["d_period_frac"] = dlam
             ordered = (k_fam >= 0
                        and t["coherence"] >= qc["coherence_ordered"]
-                       and dlam <= qc["period_tol"]
+                       and dlam <= tol_eff
                        and d_ang <= qc["angle_tol_deg"]
-                       and t["ac_strength"] >= qc["ac_strength"])
+                       and t["ac_strength"] >= max(qc["ac_floor"], qc["ac_rel"] * ac_med))
             textured = (t["coherence"] >= qc["coherence_texture"]
                         and np.isfinite(t["period_nm"]))
             t["class"] = CLASS_ORDERED if ordered else (CLASS_DISORDERED if textured else CLASS_BARE)
@@ -485,6 +499,8 @@ def analyse_image(path, pixel_nm=None, tile=None, step=None, qc=None,
         ok_dom = np.isfinite(lam_dom)
         res.update({
             "n_tiles": n,
+            "periods_per_window": float(n_per_win) if n_per_win else np.nan,
+            "period_tol_used": float(tol_eff),
             "n_tiles_valid": int(len(cls)),
             "invalid_frac": float(1.0 - n_val / max(h * wdt, 1)),
             "ordered_frac": (n_ord / n_val) if n_val else np.nan,
@@ -525,13 +541,23 @@ def analyse_image(path, pixel_nm=None, tile=None, step=None, qc=None,
 # --------------------------------------------------------------------------- #
 # batch driver
 # --------------------------------------------------------------------------- #
-def _discover(folder, exts=(".bmp", ".tif", ".tiff", ".png", ".jpg", ".jpeg")):
-    """List images with their group (parent folder name)."""
+def _discover(folder, exts=(".bmp", ".tif", ".tiff", ".png", ".jpg", ".jpeg"),
+              exclude=None):
+    """List images with their group (parent folder name).
+
+    ``exclude`` is an optional list of substrings; any path containing one of them is
+    skipped (e.g. a new wavelength folder that belongs to another analysis).
+    """
     out = []
+    excl = tuple(x.lower() for x in (exclude or ()))
     for root, _dirs, files in os.walk(folder):
+        if excl and any(x in root.lower().replace(os.sep, "/") for x in excl):
+            continue
         for f in sorted(files):
             if f.lower().endswith(exts) and not f.startswith("."):
                 p = os.path.join(root, f)
+                if excl and any(x in p.lower().replace(os.sep, "/") for x in excl):
+                    continue
                 grp = os.path.basename(root)
                 if os.path.abspath(root) == os.path.abspath(folder):
                     grp = os.path.basename(folder)
@@ -682,11 +708,11 @@ def _plot_summary(df, out_png):
 # annotated copies: the original micrograph with the poor areas marked
 # --------------------------------------------------------------------------- #
 _CLASS_STYLE = {
-    CLASS_DISORDERED: dict(color=(0.98, 0.55, 0.05), alpha=0.42,
+    CLASS_DISORDERED: dict(color=(0.98, 0.55, 0.05), alpha=0.26,
                            label="disordered  (texture present but off-spec)"),
-    CLASS_BARE: dict(color=(0.78, 0.06, 0.18), alpha=0.52,
+    CLASS_BARE: dict(color=(0.78, 0.06, 0.18), alpha=0.34,
                      label="bare / unprocessed  (no periodic texture)"),
-    -1: dict(color=(0.45, 0.45, 0.45), alpha=0.20, label="excluded  (frame line)"),
+    -1: dict(color=(0.45, 0.45, 0.45), alpha=0.15, label="excluded  (frame line)"),
 }
 
 
@@ -722,16 +748,13 @@ def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
         if cls == CLASS_ORDERED:
             continue                            # good area: left untouched
         st = _CLASS_STYLE.get(cls, _CLASS_STYLE[CLASS_BARE])
+        # flat translucent colour only — no hatching and no cell borders, so the SEM
+        # structure stays visible inside the marked area
         ax.add_patch(Rectangle((t["x0"], t["y0"]), tile, tile,
                                facecolor=st["color"], alpha=st["alpha"],
-                               edgecolor="none", zorder=3))
-        ax.add_patch(Rectangle((t["x0"], t["y0"]), tile, tile, fill=False,
-                               edgecolor=(1, 1, 1), lw=linewidth, zorder=4))
+                               edgecolor="none", lw=0.0, zorder=3))
         if cls >= 0:
             n_bad += 1
-        if cls == CLASS_BARE:                   # hatch the unprocessed areas
-            ax.add_patch(Rectangle((t["x0"], t["y0"]), tile, tile, fill=False,
-                                   hatch="////", edgecolor=(1, 1, 1, 0.85), lw=0.0, zorder=5))
 
     # outline the analysed field (the tiled part of the frame; the instrument footer
     # below it is not analysed)
@@ -760,10 +783,10 @@ def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
                     fontsize=12, color=(0.75, 1, 0.75), va="top", ha="right",
                     bbox=dict(facecolor=(0, 0, 0, 0.72), edgecolor="none", pad=4), zorder=8)
         else:
-            handles = [Patch(facecolor=_CLASS_STYLE[CLASS_DISORDERED]["color"],
-                             edgecolor="white", lw=0.8, label=_CLASS_STYLE[CLASS_DISORDERED]["label"]),
-                       Patch(facecolor=_CLASS_STYLE[CLASS_BARE]["color"], edgecolor="white", lw=0.8,
-                             hatch="////", label=_CLASS_STYLE[CLASS_BARE]["label"]),
+            handles = [Patch(facecolor=_CLASS_STYLE[CLASS_DISORDERED]["color"], alpha=0.65,
+                             edgecolor="none", label=_CLASS_STYLE[CLASS_DISORDERED]["label"]),
+                       Patch(facecolor=_CLASS_STYLE[CLASS_BARE]["color"], alpha=0.75,
+                             edgecolor="none", label=_CLASS_STYLE[CLASS_BARE]["label"]),
                        Patch(facecolor="none", edgecolor=(0.85, 0.85, 0.85), lw=1.0,
                              label="ordered  (not marked)")]
             leg = ax.legend(handles=handles, loc="upper right", fontsize=11, framealpha=0.80,
@@ -778,7 +801,8 @@ def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
 
 
 def annotate_folder(folder, out_dir, pixel_nm=None, tile=None, step=None,
-                    qc=None, suffix="_quality", verbose=True, tile_um=DEFAULT_TILE_UM):
+                    qc=None, suffix="_quality", verbose=True, tile_um=DEFAULT_TILE_UM,
+                    exclude=None):
     """Annotated copies (poor areas marked) of every image under *folder*.
 
     Keeps the group sub-folder structure, writes ``<stem><suffix>.png`` and returns
@@ -786,7 +810,7 @@ def annotate_folder(folder, out_dir, pixel_nm=None, tile=None, step=None,
     """
     import pandas as pd
     rows = []
-    for grp, path in _discover(folder):
+    for grp, path in _discover(folder, exclude=exclude):
         try:
             res = analyse_image(path, pixel_nm=pixel_nm, tile=tile, step=step, qc=qc,
                                 tile_um=tile_um)
@@ -817,7 +841,7 @@ def annotate_folder(folder, out_dir, pixel_nm=None, tile=None, step=None,
 # --------------------------------------------------------------------------- #
 def run(folder, output_dir=None, pixel_nm=None, tile=None, step=None,
         qc=None, criteria=None, figures=True, verbose=True,
-        tile_um=DEFAULT_TILE_UM):
+        tile_um=DEFAULT_TILE_UM, exclude=None):
     """Analyse every SEM image under *folder* and write the QC tables.
 
     Parameters
@@ -840,7 +864,7 @@ def run(folder, output_dir=None, pixel_nm=None, tile=None, step=None,
     qc = dict(qc or {})                 # partial overrides, applied per structure mode
     criteria = dict(DEFAULT_CRITERIA, **(criteria or {}))
 
-    items = _discover(folder)
+    items = _discover(folder, exclude=exclude)
     if not items:
         raise FileNotFoundError(f"no SEM images under {folder}")
 

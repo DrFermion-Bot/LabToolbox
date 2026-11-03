@@ -277,7 +277,7 @@ class LabToolboxApp:
         row.pack(fill="x", pady=4)
         for label, var, width, key in [
                 ("像素尺寸 nm（空=自动）", "31.25", 10, "像素尺寸 nm（空=自动）"),
-                ("判定窗边长 (µm)", "4", 8, "判定窗边长 (µm)")]:
+                ("判定窗边长 (µm)", "2", 8, "判定窗边长 (µm)")]:
             lbl = ttk.Label(row, text=tr(label, self.lang), width=22)
             lbl.pack(side="left")
             self._widgets.append((lbl, key))
