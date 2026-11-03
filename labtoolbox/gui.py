@@ -277,7 +277,7 @@ class LabToolboxApp:
         row.pack(fill="x", pady=4)
         for label, var, width, key in [
                 ("像素尺寸 nm（空=自动）", "31.25", 10, "像素尺寸 nm（空=自动）"),
-                ("分块边长 (px)", "256", 8, "分块边长 (px)")]:
+                ("判定窗边长 (µm)", "4", 8, "判定窗边长 (µm)")]:
             lbl = ttk.Label(row, text=tr(label, self.lang), width=22)
             lbl.pack(side="left")
             self._widgets.append((lbl, key))
@@ -295,7 +295,7 @@ class LabToolboxApp:
                              stx_run, folder=self.stx_folder.get(),
                              output_dir=self.stx_out.get(),
                              pixel_nm=(float(self.stx_pxnm.get()) if self.stx_pxnm.get().strip() else None),
-                             tile=int(self.stx_tile.get() or 256)))
+                             tile_um=float(self.stx_tile.get() or 4)))
 
     def _build_xdlvo_tab(self):
         tab = ttk.Frame(self.notebook)

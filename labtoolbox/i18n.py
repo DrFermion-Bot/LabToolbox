@@ -78,6 +78,7 @@ TRANSLATIONS = {
     "SEM 图像根目录（子文件夹=分组）": "SEM root folder (sub-folders = groups)",
     "像素尺寸 nm（空=自动）": "Pixel size nm (blank = auto)",
     "分块边长 (px)": "Tile edge (px)",
+    "判定窗边长 (µm)": "Window edge (µm)",
     "🚀 运行一致性分析": "🚀 Run consistency analysis",
 }
 

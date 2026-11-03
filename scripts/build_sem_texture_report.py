@@ -55,6 +55,11 @@ met = pd.read_csv(os.path.join(OUT, "sem_texture_metrics.csv"), encoding="utf-8-
 con = pd.read_csv(os.path.join(OUT, "sem_texture_consistency.csv"), encoding="utf-8-sig")
 til = pd.read_csv(os.path.join(OUT, "sem_texture_tiles.csv"), encoding="utf-8-sig")
 
+TILE_PX = float(met["tile_px"].median()) if "tile_px" in met else 128.0
+_t3k = til[til.group.isin(["LIPSS_regions", "nanopillar_regions"])]
+COLS = int(_t3k.groupby("file").x0.nunique().max())
+ROWS = int(_t3k.groupby("file").y0.nunique().max())
+
 GROUPS = ["LIPSS_regions", "nanopillar_regions"]
 LABEL = {"LIPSS_regions": "LIPSS regions (position 1)",
          "nanopillar_regions": "nanopillar regions (position 2)"}
@@ -522,9 +527,10 @@ caption(doc, "Figure 1 — Period of the same six LIPSS images obtained by four 
 
 head(doc, "3.3  Ordered-area map and the ordered fraction", 2)
 para(doc,
-     "Each field is cut into a **non-overlapping** grid of 256 px tiles (≈ 8 µm × 8 µm; 5 × 3 = 15 windows "
-     "on a 1280 × 964 analysed area). Every tile is analysed exactly like a full image (C, θ, Λ, "
-     "autocorrelation strength) and assigned to one of "
+     f"Each field is cut into a **non-overlapping** grid of 4 µm × 4 µm windows ("
+     f"{TILE_PX:g} px on the 3 k images; {COLS} × {ROWS} = {COLS*ROWS} windows on the analysed area). "
+     "Every window is analysed exactly like a full image (C, θ, Λ, autocorrelation strength) and "
+     "assigned to one of "
      "three classes. Let θ_{ref} be the modal tile orientation and Λ_{ref} the median tile period of that "
      "field (or the two references θ_{ref}, θ_{ref}+90° when the field is of the mixed type, §5):")
 add_eq(doc, msub(mr("f"), mr("ord")) + mr(" = ") +
@@ -535,9 +541,11 @@ para(doc,
      "**disordered** — it has directional structure (C ≥ 0.15) but misses one of the above (spot edge, "
      "insufficient overlap, melt pool); "
      "**bare** — no usable directionality (C < 0.15) — unprocessed areas. "
-     "Tiles on the residual frame line are excluded from the denominator and reported separately. Because the "
-     "tiles do not overlap, A_ordered/A_valid is the area actually painted in the annotated copies — a window "
-     "fraction would not be, since one 256 px window is 5 % of a 1280 × 1024 frame.")
+     "Windows on the residual frame line are excluded from the denominator and reported separately. Because "
+     "the windows do not overlap, A_ordered/A_valid is the area actually painted in the annotated copies. "
+     "The window size is a physical quantity (µm), not a pixel count, so the same field is cut the same way "
+     "at 3 k and at 12 k; 4 µm corresponds to roughly ten ripple periods, which is the smallest window in "
+     "which the fundamental can still be fitted.")
 para(doc, "The same tile table gives two further consistency numbers: the spread of the local period "
           "within a field, and the circular spread of the local orientation within a field. They quantify "
           "*uniformity inside a coupon*, whereas the between-coupon CV quantifies *reproducibility of the "
@@ -596,7 +604,7 @@ table(doc,
       ["Parameter", "single (grating)", "mixed (lattice)", "Rationale"],
       [["coherence C_{min} (ordered)", "0.45", "0.38", "≈ 80 % of the typical field coherence of that type"],
        ["coherence C_{min} (bare below)", "0.15", "0.12", "below this there is no directional structure at all"],
-       ["period tolerance", "±10 %", "±12 %", "covers the 3 k sampling quantisation (~±4 %) plus real scatter"],
+       ["period tolerance", "±10 %", "±20 %", "grating: sampling quantisation (~±4 %) plus real scatter; lattice: the pillar spacing itself spans ±20 % (p10–p90)"],
        ["angle tolerance", "±10°", "±15°", "a rotated beam shows up far above this"],
        ["autocorrelation strength", "≥ 0.40", "≥ 0.15", "phase coherence is type-specific; the mixed value is set from the observed distribution"]],
       widths=[4.6, 3.0, 3.0, 6.4])
@@ -684,8 +692,16 @@ para(doc,
      f"**Ordered area.** {gl.ordered_mean_pct:.0f} % ± {gl_ord_std:.0f} % (LIPSS) against "
      f"{gn.ordered_mean_pct:.0f} % ± {gn_ord_std:.0f} % (nanopillar), with the worst coupons at "
      f"{gl.ordered_min_pct:.0f} % and {gn.ordered_min_pct:.0f} %. The LIPSS position is essentially fully "
-     f"textured in every coupon; the nanopillar position loses a quarter of its area on average, mostly to "
-     f"regions where the lattice cannot be assigned to either reference direction.")
+     f"textured in every coupon; the nanopillar position loses about {100-gn.ordered_mean_pct:.0f} % of its "
+     f"area, mostly to windows where the lattice cannot be assigned to either reference direction.")
+_worst = npil.sort_values("bare_frac").iloc[-1]
+para(doc,
+     f"**Verdict.** The LIPSS group passes all six checks. The nanopillar group passes five and fails the "
+     f"bare-area check: coupon {_worst['coupon']} has {100*_worst['bare_frac']:.0f} % of its field with no "
+     f"periodic texture at all (the limit is 10 %), i.e. a genuine unprocessed patch rather than a period or "
+     f"orientation error. That coupon should be re-inspected before it is used as a nanopillar sample; the "
+     f"other five are inside the criteria. This is the kind of statement the fine (4 µm) window made "
+     f"visible — with 8 µm windows the same patch occupied a single window and passed.")
 para(doc,
      "**A group that must fail.** The folder `515-8_and_polished_surface` collects LIPSS, nanopillar and "
      "polished images at two magnifications. Run through the same criteria it fails every check "

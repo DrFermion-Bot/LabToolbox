@@ -67,8 +67,10 @@ __all__ = ["run", "analyse_image", "annotate_image", "annotate_folder",
 # --------------------------------------------------------------------------- #
 DEFAULT_PIXEL_NM = 31.25
 BAND_NM = (240.0, 800.0)          # admissible ripple periods
-TILE_PX = 256                      # tile edge for the area map
-TILE_STEP = 256                    # non-overlapping: window fraction == area fraction
+TILE_PX = 256                      # fallback tile edge (px) when no physical size is given
+DEFAULT_TILE_UM = 4.0              # classification window in µm (128 px on the 3 k images:
+                                   # a quarter of the earlier 8 µm window)
+TILE_STEP = None                   # non-overlapping: window fraction == area fraction
 HP_SIGMA_PX = 20                   # high-pass: removes illumination > ~0.6 µm
 
 #: tile acceptance thresholds -> ordered / disordered / bare.
@@ -85,7 +87,11 @@ DEFAULT_QC = {
     "mixed": {                     # nanopillar / crossed lattice, periodic both ways
         "coherence_ordered": 0.38,
         "coherence_texture": 0.12,
-        "period_tol": 0.12,
+        # wider than the grating tolerance on purpose: a pillar lattice has an intrinsic
+        # spacing dispersion (measured p10-p90 = +-20 % over 128 px windows), so a +-12 %
+        # band would flag good lattice as defective.  The lattice is judged mainly on C
+        # and on the autocorrelation, which are the properties that actually degrade.
+        "period_tol": 0.20,
         "angle_tol_deg": 15.0,
         "ac_strength": 0.15,
     },
@@ -342,10 +348,21 @@ def _families(hp, theta0, px_nm, per0, c_img):
 # --------------------------------------------------------------------------- #
 # single-image analysis
 # --------------------------------------------------------------------------- #
-def analyse_image(path, pixel_nm=None, tile=TILE_PX, step=TILE_STEP, qc=None):
-    """Full metric set for one micrograph."""
+def analyse_image(path, pixel_nm=None, tile=None, step=None, qc=None,
+                  tile_um=DEFAULT_TILE_UM):
+    """Full metric set for one micrograph.
+
+    The classification window is given in **µm** (``tile_um``, default 4 µm) so that the
+    same physical window is used at any magnification; ``tile`` overrides it in pixels.
+    ``step`` defaults to the tile edge (non-overlapping), so the reported area fractions
+    are exactly the painted area.
+    """
     px = pixel_nm or _sidecar_pixel_nm(path) or DEFAULT_PIXEL_NM
+    if tile is None:
+        tile = int(round(tile_um * 1000.0 / px))
+    tile = max(int(tile), 32)
     qc_override = qc or {}
+    step = int(step or tile)
 
     raw = _load_gray(path)
     img = _crop_scalebar(raw)
@@ -759,8 +776,8 @@ def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
     return out_path
 
 
-def annotate_folder(folder, out_dir, pixel_nm=None, tile=TILE_PX, step=TILE_STEP,
-                    qc=None, suffix="_quality", verbose=True):
+def annotate_folder(folder, out_dir, pixel_nm=None, tile=None, step=None,
+                    qc=None, suffix="_quality", verbose=True, tile_um=DEFAULT_TILE_UM):
     """Annotated copies (poor areas marked) of every image under *folder*.
 
     Keeps the group sub-folder structure, writes ``<stem><suffix>.png`` and returns
@@ -770,7 +787,8 @@ def annotate_folder(folder, out_dir, pixel_nm=None, tile=TILE_PX, step=TILE_STEP
     rows = []
     for grp, path in _discover(folder):
         try:
-            res = analyse_image(path, pixel_nm=pixel_nm, tile=tile, step=step, qc=qc)
+            res = analyse_image(path, pixel_nm=pixel_nm, tile=tile, step=step, qc=qc,
+                                tile_um=tile_um)
         except Exception as exc:
             if verbose:
                 print(f"  !! {os.path.basename(path)}: {exc}")
@@ -796,8 +814,9 @@ def annotate_folder(folder, out_dir, pixel_nm=None, tile=TILE_PX, step=TILE_STEP
 # --------------------------------------------------------------------------- #
 # public entry point
 # --------------------------------------------------------------------------- #
-def run(folder, output_dir=None, pixel_nm=None, tile=TILE_PX, step=TILE_STEP,
-        qc=None, criteria=None, figures=True, verbose=True):
+def run(folder, output_dir=None, pixel_nm=None, tile=None, step=None,
+        qc=None, criteria=None, figures=True, verbose=True,
+        tile_um=DEFAULT_TILE_UM):
     """Analyse every SEM image under *folder* and write the QC tables.
 
     Parameters
@@ -827,7 +846,8 @@ def run(folder, output_dir=None, pixel_nm=None, tile=TILE_PX, step=TILE_STEP,
     rows, tiles_all, imgs, tiles_by_img = [], [], {}, {}
     for grp, path in items:
         try:
-            r = analyse_image(path, pixel_nm=pixel_nm, tile=tile, step=step, qc=qc)
+            r = analyse_image(path, pixel_nm=pixel_nm, tile=tile, step=step, qc=qc,
+                              tile_um=tile_um)
         except Exception as exc:                      # keep going, report at the end
             if verbose:
                 print(f"  !! {os.path.basename(path)}: {exc}")
@@ -903,7 +923,11 @@ def run(folder, output_dir=None, pixel_nm=None, tile=TILE_PX, step=TILE_STEP,
     md.append("| check | limit | result |")
     md.append("|---|---|---|")
     for label, key, op, lim, unit in checks:
-        md.append(f"| {label} | {'≤' if op == 'le' else '≥'} {lim:g}{unit} | "
+        if lim is None:                      # relative check: show the limit per group
+            lim_txt = " vs group mean − " + f"{criteria['ordered_spread_pts']:g}" + " pts"
+        else:
+            lim_txt = f"{'≤' if op == 'le' else '≥'} {lim:g}{unit}"
+        md.append(f"| {label} | {lim_txt} | "
                   + ", ".join(f"{s['group']}: {s['chk_' + key]}" for s in stats) + " |")
     md.append("")
     md.append("## Per-image results")

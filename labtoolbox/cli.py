@@ -37,7 +37,7 @@ def cmd_lipss_dloa(args):
 def cmd_sem_texture(args):
     from .semtexture import run as tex_run
     result = tex_run(folder=args.folder, output_dir=args.output,
-                     pixel_nm=args.pixel_nm, tile=args.tile,
+                     pixel_nm=args.pixel_nm, tile=args.tile, tile_um=args.tile_um,
                      figures=not args.no_figures)
     print(f"✅ 织构一致性分析完成: {result['n_images']} 张图像, {len(result['stats'])} 组")
     for s in result["stats"]:
@@ -48,7 +48,8 @@ def cmd_sem_texture(args):
     if args.annotate_dir:
         from .semtexture import annotate_folder
         ann = annotate_folder(args.folder, args.annotate_dir,
-                              pixel_nm=args.pixel_nm, tile=args.tile)
+                              pixel_nm=args.pixel_nm, tile=args.tile,
+                              tile_um=args.tile_um)
         print(f"   标注图 {ann['n']} 张 → {ann['output_dir']}")
     return 0
 
@@ -158,7 +159,10 @@ def build_parser():
     p.add_argument("--folder", required=True, help="SEM 图像根目录 (子文件夹 = 分组, 如 LIPSS_regions)")
     p.add_argument("--pixel-nm", type=float, default=None, dest="pixel_nm",
                    help="像素尺寸 nm (默认读 JSM *.txt sidecar, 没有则 31.25 = 3k 图)")
-    p.add_argument("--tile", type=int, default=256, help="分块边长 (px, 默认 256)")
+    p.add_argument("--tile-um", type=float, default=4.0, dest="tile_um",
+                   help="判定窗边长 (µm, 默认 4 µm = 3k 图上 128 px)")
+    p.add_argument("--tile", type=int, default=None,
+                   help="判定窗边长 (px, 给定则覆盖 --tile-um)")
     p.add_argument("--output", default="output", help="输出目录")
     p.add_argument("--no-figures", action="store_true", help="不出分块分类图与汇总图")
     p.add_argument("--annotate-dir", default=None, dest="annotate_dir",
