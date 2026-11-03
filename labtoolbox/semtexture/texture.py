@@ -741,8 +741,9 @@ def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
         y0 = min(t["y0"] for t in tl); y1 = max(t["y0"] for t in tl) + tile
         ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, ls=(0, (6, 4)),
                                edgecolor=(1, 1, 1, 0.75), lw=1.1, zorder=6))
-        ax.text(x1 - 4, y1 + 14, "analysed field", color=(1, 1, 1, 0.85), fontsize=9,
-                ha="right", va="bottom", zorder=6)
+        ax.text(x1 - 6, y1 + 10, "analysed field", color=(1, 1, 1, 0.9), fontsize=9,
+                ha="right", va="bottom", zorder=6,
+                bbox=dict(facecolor=(0, 0, 0, 0.45), edgecolor="none", pad=2.5))
 
     if label:
         stats = (f"{res['coupon']}\n"
