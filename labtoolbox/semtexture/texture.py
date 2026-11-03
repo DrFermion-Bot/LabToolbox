@@ -59,7 +59,8 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 
 from ..common.io_utils import ensure_output_dir, save_csv, save_figure
 
-__all__ = ["run", "analyse_image", "DEFAULT_QC", "DEFAULT_CRITERIA"]
+__all__ = ["run", "analyse_image", "annotate_image", "annotate_folder",
+           "DEFAULT_QC", "DEFAULT_CRITERIA"]
 
 # --------------------------------------------------------------------------- #
 # Defaults (calibrated on the 515 nm coupon series, 2026-11-03)
@@ -67,7 +68,7 @@ __all__ = ["run", "analyse_image", "DEFAULT_QC", "DEFAULT_CRITERIA"]
 DEFAULT_PIXEL_NM = 31.25
 BAND_NM = (240.0, 800.0)          # admissible ripple periods
 TILE_PX = 256                      # tile edge for the area map
-TILE_STEP = 128                    # 50 % overlap
+TILE_STEP = 256                    # non-overlapping: window fraction == area fraction
 HP_SIGMA_PX = 20                   # high-pass: removes illumination > ~0.6 µm
 
 #: tile acceptance thresholds -> ordered / disordered / bare.
@@ -96,7 +97,9 @@ DEFAULT_CRITERIA = {
     "theta_sd_deg": 3.0,           # between-coupon circular SD of the orientation
     "coherence_mean": 0.40,        # mean coherence
     "ordered_mean_pct": 70.0,      # mean ordered-area fraction (monitoring threshold)
-    "ordered_min_pct": 55.0,       # worst coupon
+    "ordered_spread_pts": 20.0,    # worst coupon may sit at most this far below the group mean
+                                   # (a relative criterion: with ~15 windows per field an
+                                   #  absolute floor would just measure sampling granularity)
     "bare_max_pct": 10.0,          # worst coupon
 }
 
@@ -291,6 +294,28 @@ def _coupon_id(path, alias=None):
 SINGLE_AC_SPLIT = 0.60
 
 
+def _rasterise_classes(tiles, shape, tile):
+    """Pixel-level class map of the tile grid (worst class wins where tiles overlap).
+
+    Returns an int8 array: -2 = no tile covers this pixel, -1 = excluded tile,
+    0 = bare, 1 = disordered, 2 = ordered.  Fractions computed from this array are
+    true area fractions of the field — which is what the annotated copies paint —
+    whereas counting tiles would over-weight isolated defects (one 256 px window is
+    5 % of a 1280 x 1024 frame).
+    """
+    cls = np.full(shape, -2, dtype=np.int8)
+    prio_map = {0: 3, 1: 2, -1: 1, 2: 0}       # higher wins: bare > disordered > excluded > ordered
+    prio = np.full(shape, -1, dtype=np.int8)
+    for t in tiles:
+        y0, x0, v = t["y0"], t["x0"], int(t["class"])
+        pr = prio_map.get(v, 0)
+        sl = (slice(y0, min(y0 + tile, shape[0])), slice(x0, min(x0 + tile, shape[1])))
+        upd = pr > prio[sl]
+        cls[sl][upd] = v
+        prio[sl][upd] = pr
+    return cls
+
+
 def _families(hp, theta0, px_nm, per0, c_img):
     """(families, mode) for one field.
 
@@ -427,8 +452,16 @@ def analyse_image(path, pixel_nm=None, tile=TILE_PX, step=TILE_STEP, qc=None):
             t["class"] = CLASS_ORDERED if ordered else (CLASS_DISORDERED if textured else CLASS_BARE)
 
         n = len(tiles)
-        cls_all = np.array([t["class"] for t in tiles])
-        cls = cls_all[cls_all >= 0]
+        # ---- area fractions on the rasterised map (overlapping tiles counted once) ----
+        cmap_px = _rasterise_classes(tiles, (h, wdt), tile)
+        in_field = cmap_px != -2
+        n_field_px = int(in_field.sum())
+        n_ord = int(np.count_nonzero(cmap_px == CLASS_ORDERED))
+        n_dis = int(np.count_nonzero(cmap_px == CLASS_DISORDERED))
+        n_bar = int(np.count_nonzero(cmap_px == CLASS_BARE))
+        n_val = n_ord + n_dis + n_bar
+        cls = np.array([t["class"] for t in tiles])
+        cls = cls[cls >= 0]
         # period statistics inside the dominant family
         dom = [t for t in valid if t.get("family") == 0] if fams else valid
         lam_dom = np.array([t["period_nm"] for t in dom], dtype=float)
@@ -436,10 +469,11 @@ def analyse_image(path, pixel_nm=None, tile=TILE_PX, step=TILE_STEP, qc=None):
         res.update({
             "n_tiles": n,
             "n_tiles_valid": int(len(cls)),
-            "invalid_frac": float(1.0 - len(cls) / n),
-            "ordered_frac": float(np.mean(cls == CLASS_ORDERED)) if len(cls) else np.nan,
-            "disordered_frac": float(np.mean(cls == CLASS_DISORDERED)) if len(cls) else np.nan,
-            "bare_frac": float(np.mean(cls == CLASS_BARE)) if len(cls) else np.nan,
+            "invalid_frac": float(1.0 - n_val / max(h * wdt, 1)),
+            "ordered_frac": (n_ord / n_val) if n_val else np.nan,
+            "disordered_frac": (n_dis / n_val) if n_val else np.nan,
+            "bare_frac": (n_bar / n_val) if n_val else np.nan,
+            "tile_frac_ordered": float(np.mean(cls == CLASS_ORDERED)) if len(cls) else np.nan,
             "n_families": len(fams),
             "theta1_deg": fams[0]["theta_deg"] if fams else np.nan,
             "theta2_deg": fams[1]["theta_deg"] if len(fams) > 1 else np.nan,
@@ -517,12 +551,15 @@ def _batch_stats(df, criteria):
         ("orientation SD (between coupons)", "theta_sd_deg", "le", criteria["theta_sd_deg"], "deg"),
         ("mean coherence", "coherence_mean", "ge", criteria["coherence_mean"], ""),
         ("mean ordered area", "ordered_mean_pct", "ge", criteria["ordered_mean_pct"], "%"),
-        ("worst coupon ordered area", "ordered_min_pct", "ge", criteria["ordered_min_pct"], "%"),
+        ("worst coupon vs group mean", "ordered_min_pct", "ge", None, "%"),   # dynamic limit
         ("worst coupon bare area", "bare_max_pct", "le", criteria["bare_max_pct"], "%"),
     ]
     for r in rows:
         verdicts = []
         for label, key, op, lim, unit in checks:
+            if lim is None:                       # relative-uniformity check
+                lim = r["ordered_mean_pct"] - criteria["ordered_spread_pts"]
+            r["limit_" + key] = lim
             v = r.get(key, np.nan)
             pass_ = (v <= lim) if op == "le" else (v >= lim)
             verdicts.append(bool(pass_) and np.isfinite(v))
@@ -625,6 +662,138 @@ def _plot_summary(df, out_png):
 
 
 # --------------------------------------------------------------------------- #
+# annotated copies: the original micrograph with the poor areas marked
+# --------------------------------------------------------------------------- #
+_CLASS_STYLE = {
+    CLASS_DISORDERED: dict(color=(0.98, 0.55, 0.05), alpha=0.42,
+                           label="disordered  (texture present but off-spec)"),
+    CLASS_BARE: dict(color=(0.78, 0.06, 0.18), alpha=0.52,
+                     label="bare / unprocessed  (no periodic texture)"),
+    -1: dict(color=(0.45, 0.45, 0.45), alpha=0.20, label="excluded  (frame line)"),
+}
+
+
+def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
+    """Copy the micrograph and mark the areas whose processing quality is poor.
+
+    Only the defective tiles are painted (semi-transparent colour + white outline;
+    bare areas additionally hatched), so the texture stays readable everywhere else.
+    The full frame — instrument footer and scale bar included — is preserved.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle, Patch
+
+    if res is None:
+        res = analyse_image(path)
+    img = _load_gray(path)                      # full frame, scale bar included
+    h, w = img.shape
+    tile = int(res.get("tile_px", TILE_PX))
+
+    fig = plt.figure(figsize=(w / 100.0, h / 100.0), dpi=100)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.imshow(img, cmap="gray", vmin=np.percentile(img, 1), vmax=np.percentile(img, 99.5),
+              extent=(0, w, h, 0), interpolation="nearest")
+    ax.set_xlim(0, w)
+    ax.set_ylim(h, 0)
+    ax.axis("off")
+
+    n_bad = 0
+    for t in res.get("_tiles", []):
+        cls = t["class"]
+        if cls == CLASS_ORDERED:
+            continue                            # good area: left untouched
+        st = _CLASS_STYLE.get(cls, _CLASS_STYLE[CLASS_BARE])
+        ax.add_patch(Rectangle((t["x0"], t["y0"]), tile, tile,
+                               facecolor=st["color"], alpha=st["alpha"],
+                               edgecolor="none", zorder=3))
+        ax.add_patch(Rectangle((t["x0"], t["y0"]), tile, tile, fill=False,
+                               edgecolor=(1, 1, 1), lw=linewidth, zorder=4))
+        if cls >= 0:
+            n_bad += 1
+        if cls == CLASS_BARE:                   # hatch the unprocessed areas
+            ax.add_patch(Rectangle((t["x0"], t["y0"]), tile, tile, fill=False,
+                                   hatch="////", edgecolor=(1, 1, 1, 0.85), lw=0.0, zorder=5))
+
+    # outline the analysed field (the tiled part of the frame; the instrument footer
+    # below it is not analysed)
+    tl = res.get("_tiles", [])
+    if tl:
+        x0 = min(t["x0"] for t in tl); x1 = max(t["x0"] for t in tl) + tile
+        y0 = min(t["y0"] for t in tl); y1 = max(t["y0"] for t in tl) + tile
+        ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, fill=False, ls=(0, (6, 4)),
+                               edgecolor=(1, 1, 1, 0.75), lw=1.1, zorder=6))
+        ax.text(x1 - 4, y1 + 14, "analysed field", color=(1, 1, 1, 0.85), fontsize=9,
+                ha="right", va="bottom", zorder=6)
+
+    if label:
+        stats = (f"{res['coupon']}\n"
+                 f"Λ = {res['period_nm']:.0f} nm    C = {res['coherence']:.2f}\n"
+                 f"ordered {100*res.get('ordered_frac', np.nan):.0f} %   "
+                 f"disordered {100*res.get('disordered_frac', np.nan):.0f} %   "
+                 f"bare {100*res.get('bare_frac', np.nan):.0f} %")
+        ax.text(0.015, 0.975, stats, transform=ax.transAxes, fontsize=13, color="white",
+                va="top", ha="left", linespacing=1.45,
+                bbox=dict(facecolor=(0, 0, 0, 0.72), edgecolor=(1, 1, 1, 0.45),
+                          boxstyle="round,pad=0.45"), zorder=8)
+        if n_bad == 0:
+            ax.text(0.985, 0.975, "no defective region detected", transform=ax.transAxes,
+                    fontsize=12, color=(0.75, 1, 0.75), va="top", ha="right",
+                    bbox=dict(facecolor=(0, 0, 0, 0.72), edgecolor="none", pad=4), zorder=8)
+        else:
+            handles = [Patch(facecolor=_CLASS_STYLE[CLASS_DISORDERED]["color"],
+                             edgecolor="white", lw=0.8, label=_CLASS_STYLE[CLASS_DISORDERED]["label"]),
+                       Patch(facecolor=_CLASS_STYLE[CLASS_BARE]["color"], edgecolor="white", lw=0.8,
+                             hatch="////", label=_CLASS_STYLE[CLASS_BARE]["label"]),
+                       Patch(facecolor="none", edgecolor=(0.85, 0.85, 0.85), lw=1.0,
+                             label="ordered  (not marked)")]
+            leg = ax.legend(handles=handles, loc="upper right", fontsize=11, framealpha=0.80,
+                            facecolor="black", labelcolor="white", borderpad=0.7,
+                            handlelength=1.6, labelspacing=0.55)
+            leg.set_zorder(9)
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    fig.savefig(out_path, dpi=100, facecolor="black")
+    plt.close(fig)
+    return out_path
+
+
+def annotate_folder(folder, out_dir, pixel_nm=None, tile=TILE_PX, step=TILE_STEP,
+                    qc=None, suffix="_quality", verbose=True):
+    """Annotated copies (poor areas marked) of every image under *folder*.
+
+    Keeps the group sub-folder structure, writes ``<stem><suffix>.png`` and returns
+    the list of (source, annotated) pairs plus a summary DataFrame.
+    """
+    import pandas as pd
+    rows = []
+    for grp, path in _discover(folder):
+        try:
+            res = analyse_image(path, pixel_nm=pixel_nm, tile=tile, step=step, qc=qc)
+        except Exception as exc:
+            if verbose:
+                print(f"  !! {os.path.basename(path)}: {exc}")
+            continue
+        rel = os.path.relpath(os.path.dirname(path), os.path.abspath(folder))
+        sub = os.path.join(out_dir, "" if rel == "." else rel)
+        out = os.path.join(sub, os.path.splitext(os.path.basename(path))[0] + suffix + ".png")
+        annotate_image(path, out, res=res)
+        rows.append(dict(source=path, annotated=out, group=grp, coupon=res["coupon"],
+                         period_nm=res["period_nm"], coherence=res["coherence"],
+                         ordered_frac=res["ordered_frac"], disordered_frac=res["disordered_frac"],
+                         bare_frac=res["bare_frac"], invalid_frac=res.get("invalid_frac", np.nan),
+                         mode=res.get("mode"), n_tiles=res.get("n_tiles")))
+        if verbose:
+            print(f"  {os.path.basename(out):28s} ordered {100*res['ordered_frac']:5.1f} %  "
+                  f"disordered {100*res['disordered_frac']:5.1f} %  bare {100*res['bare_frac']:5.1f} %")
+    df = pd.DataFrame(rows)
+    if len(df):
+        save_csv(df, os.path.join(out_dir, "quality_map_summary.csv"))
+    return dict(output_dir=out_dir, n=len(df), table=df)
+
+
+# --------------------------------------------------------------------------- #
 # public entry point
 # --------------------------------------------------------------------------- #
 def run(folder, output_dir=None, pixel_nm=None, tile=TILE_PX, step=TILE_STEP,
@@ -695,6 +864,8 @@ def run(folder, output_dir=None, pixel_nm=None, tile=TILE_PX, step=TILE_STEP,
     if len(tdf):
         save_csv(tdf, os.path.join(out, "sem_texture_tiles.csv"))
     save_csv(pd.DataFrame(stats), os.path.join(out, "sem_texture_consistency.csv"))
+    with open(os.path.join(out, "sem_texture_checks.json"), "w", encoding="utf-8") as fh:
+        json.dump([list(c) for c in checks], fh, ensure_ascii=False, indent=1)
 
     made = []
     if figures:

@@ -70,6 +70,20 @@ def g(name):
     return con[con.group == name].iloc[0]
 
 
+CHECKS = None          # filled from the module's own run bookkeeping below
+try:
+    import json as _json
+    _meta = _json.load(open(os.path.join(OUT, "sem_texture_checks.json"), encoding="utf-8"))
+    CHECKS = [tuple(x) for x in _meta]
+except Exception:
+    CHECKS = [("period CV (between coupons)", "period_cv_pct", "le", 3.0, "%"),
+              ("orientation SD (between coupons)", "theta_sd_deg", "le", 3.0, "deg"),
+              ("mean coherence", "coherence_mean", "ge", 0.40, ""),
+              ("mean ordered area", "ordered_mean_pct", "ge", 70.0, "%"),
+              ("worst coupon vs group mean", "ordered_min_pct", "ge", None, "%"),
+              ("worst coupon bare area", "bare_max_pct", "le", 10.0, "%")]
+
+
 # v5 reference numbers (optional — read from the appendix if present)
 v5 = None
 if os.path.exists(APX):
@@ -422,7 +436,8 @@ para(doc,
      "peak search returns on these 3 k images (~465 nm) is an artefact of the illumination envelope; the "
      "ripple fundamental is only ~12 px wide, and only a profile-based estimator recovers it "
      "(Fig. 1). Second, the nanopillar position is measurably less uniform than the LIPSS position: same "
-     "period repeatability, but the ordered area drops from ~100 % to ~75 % and the local period spread "
+     f"period repeatability, but the ordered area drops from ~{gl.ordered_mean_pct:.0f} % to "
+     f"~{gn.ordered_mean_pct:.0f} % and the local period spread "
      "roughly doubles. That is a process statement, not a measurement artefact, and it is the kind of "
      "distinction the criteria in §5 are designed to separate.")
 
@@ -507,19 +522,22 @@ caption(doc, "Figure 1 — Period of the same six LIPSS images obtained by four 
 
 head(doc, "3.3  Ordered-area map and the ordered fraction", 2)
 para(doc,
-     "Each field is divided into 256 px tiles (≈ 8 µm × 8 µm) with 50 % overlap (step 128 px). Every tile "
-     "is analysed exactly like a full image (C, θ, Λ, autocorrelation strength) and assigned to one of "
+     "Each field is cut into a **non-overlapping** grid of 256 px tiles (≈ 8 µm × 8 µm; 5 × 3 = 15 windows "
+     "on a 1280 × 964 analysed area). Every tile is analysed exactly like a full image (C, θ, Λ, "
+     "autocorrelation strength) and assigned to one of "
      "three classes. Let θ_{ref} be the modal tile orientation and Λ_{ref} the median tile period of that "
      "field (or the two references θ_{ref}, θ_{ref}+90° when the field is of the mixed type, §5):")
 add_eq(doc, msub(mr("f"), mr("ord")) + mr(" = ") +
-        mfrac(msub(mr("N"), mr("ordered")), msub(mr("N"), mr("valid"))))
+        mfrac(msub(mr("A"), mr("ordered")), msub(mr("A"), mr("valid"))))
 para(doc,
      "**ordered** — C ≥ C_{min}, |Λ − Λ_{ref}| / Λ_{ref} ≤ 10 %, |θ − θ_{ref}| ≤ 10° and the autocorrelation "
      "strength ≥ 0.40 (a region that really carries the intended texture); "
      "**disordered** — it has directional structure (C ≥ 0.15) but misses one of the above (spot edge, "
      "insufficient overlap, melt pool); "
      "**bare** — no usable directionality (C < 0.15) — unprocessed areas. "
-     "Tiles on the residual frame line are excluded from the denominator and reported separately.")
+     "Tiles on the residual frame line are excluded from the denominator and reported separately. Because the "
+     "tiles do not overlap, A_ordered/A_valid is the area actually painted in the annotated copies — a window "
+     "fraction would not be, since one 256 px window is 5 % of a 1280 × 1024 frame.")
 para(doc, "The same tile table gives two further consistency numbers: the spread of the local period "
           "within a field, and the circular spread of the local orientation within a field. They quantify "
           "*uniformity inside a coupon*, whereas the between-coupon CV quantifies *reproducibility of the "
@@ -590,16 +608,25 @@ para(doc,
      "A coupon group passes when **all six** checks below hold. The thresholds are monitoring limits: they "
      "mark the point where a batch should be re-inspected before it is used for the next stage (adhesion "
      "testing, protein work, etc.), not a physical limit.")
-table(doc,
-      ["#", "Check", "Limit", "LIPSS", "Nanopillar"],
-      [["1", "CV of the period between coupons", "≤ 3.0 %", f"{gl.period_cv_pct:.2f} %  PASS", f"{gn.period_cv_pct:.2f} %  PASS"],
-       ["2", "Circular SD of the orientation", "≤ 3.0°", f"{gl.theta_sd_deg:.2f}°  PASS", f"{gn.theta_sd_deg:.2f}°  PASS"],
-       ["3", "Mean coherence", "≥ 0.40", f"{gl.coherence_mean:.3f}  PASS", f"{gn.coherence_mean:.3f}  PASS"],
-       ["4", "Mean ordered area", "≥ 70 %", f"{gl.ordered_mean_pct:.1f} %  PASS", f"{gn.ordered_mean_pct:.1f} %  PASS"],
-       ["5", "Worst coupon, ordered area", "≥ 55 %", f"{gl.ordered_min_pct:.1f} %  PASS", f"{gn.ordered_min_pct:.1f} %  PASS"],
-       ["6", "Worst coupon, bare area", "≤ 10 %", f"{gl.bare_max_pct:.1f} %  PASS", f"{gn.bare_max_pct:.1f} %  PASS"],
-       ["", "**Group verdict**", "", f"**{gl.verdict}**", f"**{gn.verdict}**"]],
-      widths=[0.9, 6.6, 2.6, 3.3, 3.3])
+LIMIT_TXT = {"period_cv_pct": "≤ 3.0 %", "theta_sd_deg": "≤ 3.0°", "coherence_mean": "≥ 0.40",
+             "ordered_mean_pct": "≥ 70 %", "ordered_min_pct": "≥ group mean − 20 pts",
+             "bare_max_pct": "≤ 10 %"}
+FMT = {"period_cv_pct": ":.2f| %", "theta_sd_deg": ":.2f|°", "coherence_mean": ":.3f|",
+       "ordered_mean_pct": ":.1f| %", "ordered_min_pct": ":.1f| %", "bare_max_pct": ":.1f| %"}
+
+
+def _cell(row, key):
+    spec, unit = FMT[key].split("|")
+    v = float(row[key])
+    return f"{v:{spec[1:]}}{unit}  {row['chk_' + key]}"
+
+
+_rows = []
+for i, (label, key, op, lim, unit) in enumerate(CHECKS, 1):
+    _rows.append([str(i), label, LIMIT_TXT[key], _cell(gl, key), _cell(gn, key)])
+_rows.append(["", "Group verdict", "", gl.verdict, gn.verdict])
+table(doc, ["#", "Check", "Limit", "LIPSS", "Nanopillar"], _rows,
+      widths=[0.9, 6.6, 3.4, 3.1, 3.1])
 caption(doc, "Table 2 — Batch criteria evaluated on the two coupon groups (6 coupons each, one field per coupon).")
 para(doc,
      "Two deliberate exclusions: debris density and profile contrast are reported but never gate a batch. "

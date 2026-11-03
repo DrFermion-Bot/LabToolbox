@@ -45,6 +45,11 @@ def cmd_sem_texture(args):
               f"(CV {s['period_cv_pct']:.2f} %), θ SD {s['theta_sd_deg']:.1f}°, "
               f"合格区 {s['ordered_mean_pct']:.0f} % → {s['verdict']}")
     print(f"   报告: {result['markdown']}")
+    if args.annotate_dir:
+        from .semtexture import annotate_folder
+        ann = annotate_folder(args.folder, args.annotate_dir,
+                              pixel_nm=args.pixel_nm, tile=args.tile)
+        print(f"   标注图 {ann['n']} 张 → {ann['output_dir']}")
     return 0
 
 
@@ -156,6 +161,8 @@ def build_parser():
     p.add_argument("--tile", type=int, default=256, help="分块边长 (px, 默认 256)")
     p.add_argument("--output", default="output", help="输出目录")
     p.add_argument("--no-figures", action="store_true", help="不出分块分类图与汇总图")
+    p.add_argument("--annotate-dir", default=None, dest="annotate_dir",
+                   help="另存一份标注图 (原图副本 + 质量差的区域着色/斜线) 到该目录")
 
     p = sub.add_parser("xdlvo", help=COMMANDS["xdlvo"][1])
     p.add_argument("--angles", required=True,
