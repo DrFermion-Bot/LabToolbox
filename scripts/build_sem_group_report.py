@@ -42,6 +42,7 @@ from docx.oxml import OxmlElement, parse_xml
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from labtoolbox.semtexture import (analyse_image, annotate_folder, annotate_image,
                                    _discover, _load_gray, _crop_scalebar,
+                                   _rasterise_severity, quality_rgba,
                                    DEFAULT_TILE_UM, DEFAULT_PIXEL_NM)
 from labtoolbox.semtexture.texture import CLASS_ORDERED, CLASS_DISORDERED, CLASS_BARE
 
@@ -255,27 +256,43 @@ def fig_tile_hist(til, out_png):
 
 
 def fig_maps(res_list, out_png, n_max=4):
+    """Quality heat map: dark = inside the band, pale yellow -> deep red = further outside."""
     picks = res_list[:n_max]
-    cmap = ListedColormap(["#6e6e6e", "#d62728", "#ff9f1a", "#2ca02c"])
-    norm = BoundaryNorm([-1.5, -0.5, 0.5, 1.5, 2.5], cmap.N)
     fig, axes = plt.subplots(1, len(picks), figsize=(3.2 * len(picks), 3.0))
     if len(picks) == 1:
         axes = [axes]
     for ax, (path, r) in zip(axes, picks):
-        canvas = np.full((int(r["img_h_px"]), int(r["img_w_px"])), 2.0)
-        t_px = int(r["tile_px"])
-        for t in r["_tiles"]:
-            canvas[t["y0"]:t["y0"] + t_px, t["x0"]:t["x0"] + t_px] = t["class"]
-        ax.imshow(canvas, cmap=cmap, norm=norm, interpolation="nearest")
-        ax.set_title(f"{os.path.splitext(r['file'])[0]}\nΛ {r['period_nm']:.0f} nm · "
+        sev = _rasterise_severity(r["_tiles"], (int(r["img_h_px"]), int(r["img_w_px"])),
+                                 int(r["tile_px"]))
+        rgb = np.ones(sev.shape + (3,), dtype=float) * 0.96      # excluded / not analysed
+        good = np.isfinite(sev) & (sev <= 0)
+        bad = np.isfinite(sev) & (sev > 0)
+        rgb[good] = (0.16, 0.16, 0.16)
+        if bad.any():
+            rgb[bad] = np.array([quality_rgba(v)[:3] for v in sev[bad]])
+        ax.imshow(rgb, interpolation="nearest")
+        lam_txt = f"Λ {r['period_nm']:.0f} nm" if np.isfinite(r["period_nm"]) else "Λ n.m."
+        ax.set_title(f"{os.path.splitext(r['file'])[0]}\n{lam_txt} · "
                      f"ordered {100*r['ordered_frac']:.0f} %", fontsize=7.5)
         ax.axis("off")
-    handles = [Patch(color="#2ca02c", label="ordered"), Patch(color="#ff9f1a", label="disordered"),
-               Patch(color="#d62728", label="bare"), Patch(color="#6e6e6e", label="excluded")]
-    fig.legend(handles=handles, loc="lower center", ncol=4, frameon=False, fontsize=7.5,
-               bbox_to_anchor=(0.5, -0.02))
-    fig.tight_layout(rect=(0, 0.05, 1, 1))
-    fig.savefig(out_png, dpi=250, bbox_inches="tight")
+    cax = fig.add_axes([0.30, 0.055, 0.40, 0.022])
+    ramp = np.linspace(0, 1, 128)[None, :].repeat(4, axis=0)
+    cax.imshow(ramp, aspect="auto", extent=(0, 1, 0, 1), origin="lower",
+               cmap=ListedColormap([quality_rgba(i / 127)[:3] for i in range(128)]))
+    cax.set_xticks([0, 0.5, 1.0])
+    cax.set_xticklabels(["just off-spec", "1.75× outside", "≥2.5× outside"], fontsize=6.5)
+    cax.set_yticks([])
+    for s in cax.spines.values():
+        s.set_visible(False)
+    fig.text(0.30, 0.088, "window quality  (dark = inside the acceptance band)",
+             fontsize=7, ha="left", va="bottom")
+    for x, col, lab in ((0.300, (0.16, 0.16, 0.16), "inside the band"),
+                        (0.470, (0.96, 0.96, 0.96), "not analysed (frame)")):
+        fig.add_artist(plt.Rectangle((x, 0.018), 0.016, 0.016, transform=fig.transFigure,
+                                     facecolor=col, edgecolor=(0.4, 0.4, 0.4), lw=0.5))
+        fig.text(x + 0.020, 0.019, lab, fontsize=6.5, ha="left", va="bottom")
+    fig.tight_layout(rect=(0, 0.10, 1, 1))
+    fig.savefig(out_png, dpi=250, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return out_png
 
@@ -291,7 +308,7 @@ def fig_pair(orig_path, ann_png, out_png, title=""):
     axes[0].imshow(a, cmap="gray", vmin=np.percentile(a, 1), vmax=np.percentile(a, 99.5))
     axes[0].set_title("original", fontsize=8.5)
     axes[1].imshow(b)
-    axes[1].set_title("marked (orange = off-spec texture)", fontsize=8.5)
+    axes[1].set_title("quality overlay  (pale yellow → deep red)", fontsize=8.5)
     for ax in axes:
         ax.axis("off")
     if title:
@@ -356,9 +373,10 @@ def build(folder, report_dir=None, title=None, tile_um=DEFAULT_TILE_UM,
         # and stripping them keeps the marked structure readable at print size
         plain = os.path.join(plaindir, stem + "_marked.png")
         annotate_image(path, plain, res=r, label=False)
+        lam_s = f"{r['period_nm']:.0f} nm" if np.isfinite(r["period_nm"]) else "not measurable"
         pair = fig_pair(path, plain, os.path.join(pdir, stem + "_pair.png"),
                         title=f"{os.path.splitext(os.path.basename(path))[0]}   "
-                              f"Λ {r['period_nm']:.0f} nm · θ {r['theta_deg']:.1f}° · "
+                              f"Λ {lam_s} · θ {r['theta_deg']:.1f}° · "
                               f"ordered {100*r['ordered_frac']:.0f} % · bare {100*r['bare_frac']:.0f} %")
         pairs.append((pair, r))
 
@@ -472,6 +490,12 @@ def build(folder, report_dir=None, title=None, tile_um=DEFAULT_TILE_UM,
          f"texture is there but off-spec) or *bare* (no periodic texture). The ordered fraction is the area "
          f"of the field that passed; the annotated copies paint exactly that classification.")
     para(doc,
+         "How far outside the band a window sits is kept as a continuous score rather than a yes/no flag: "
+         "each gate becomes a ratio *measured / allowed*, the window takes its worst ratio, and 0 → 1 maps "
+         "1× → 2.5× outside the band. That score drives the tint of the marked copies (pale yellow → deep "
+         "red) and the `severity` column of the window table, so a surface that is *just* off-spec looks "
+         "different from one that is far off.")
+    para(doc,
          "Acceptance thresholds, the calibration of both structure types and the full method are documented "
          "once in `SEM-EDX graphics/01_reports_and_metadata/SEM_texture_consistency_report_20261103.pdf`; "
          "this report applies the same settings to one sample folder.")
@@ -504,8 +528,9 @@ def build(folder, report_dir=None, title=None, tile_um=DEFAULT_TILE_UM,
 
     doc.add_picture(F3, width=Cm(16.2))
     doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    caption(doc, "Figure 3 — window classification for the first fields (green ordered / orange disordered / "
-                 "red bare / grey excluded).")
+    caption(doc, "Figure 3 — window quality for the first fields: dark grey = inside the acceptance "
+                 "band, pale yellow → deep red = progressively further outside it, light grey = "
+                 "excluded frame.")
 
     head(doc, "3  Notes and limits", 1)
     for s in [
@@ -523,10 +548,15 @@ def build(folder, report_dir=None, title=None, tile_um=DEFAULT_TILE_UM,
         p.paragraph_format.space_after = Pt(2)
 
     head(doc, "Appendix  Original vs marked, field by field", 1)
-    para(doc, "Every field of this set, left = the original micrograph, right = the same field with the "
-              "poorly-processed windows marked (orange = disordered, pink = bare; no hatching, so the "
-              "structure stays visible). Full-resolution copies of the marked images are in "
-              "`QC_report/annotated/`.")
+    para(doc, "Every field of this set, left = the original micrograph, right = the same field with each "
+              "window tinted according to how far it falls outside the acceptance band: **pale yellow "
+              "for a window that is only marginally off-spec, deepening through orange to deep red for a "
+              "window that misses the band by 2.5× or more** (a window whose period cannot be fitted at "
+              "all takes the darkest tint). Untinted areas are inside the band. The tint is flat and "
+              "semi-transparent (α = 0.14–0.42, rising with severity), with no hatching and no cell "
+              "borders, so the ripple structure stays visible underneath. Full-resolution copies are in "
+              "`QC_report/annotated/`, and the per-window values are in "
+              "`QC_report/window_classes.csv` (column `severity`).")
     for i, (pair, r) in enumerate(pairs, 1):
         doc.add_picture(pair, width=Cm(16.4))
         doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER

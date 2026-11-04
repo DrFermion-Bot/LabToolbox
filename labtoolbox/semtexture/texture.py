@@ -309,6 +309,42 @@ def _coupon_id(path, alias=None):
 SINGLE_AC_SPLIT = 0.60
 
 
+# pale yellow (marginally off-spec) -> deep red (far off-spec / no texture at all)
+_QUALITY_STOPS = [(0.00, (1.00, 0.95, 0.66)),
+                  (0.30, (0.99, 0.77, 0.29)),
+                  (0.55, (0.94, 0.46, 0.16)),
+                  (0.80, (0.72, 0.06, 0.06)),
+                  (1.00, (0.42, 0.00, 0.04))]
+
+
+def quality_rgba(s, alpha_min=0.14, alpha_max=0.42):
+    """Colour for a severity *s* in [0, 1]: pale yellow -> deep red, translucent.
+
+    Transparency rises with severity but stays low enough that the SEM structure is
+    still readable through the tint (alpha never exceeds 0.45).
+    """
+    s = float(np.clip(s, 0.0, 1.0))
+    st = _QUALITY_STOPS
+    for i in range(len(st) - 1):
+        (x0, c0), (x1, c1) = st[i], st[i + 1]
+        if s <= x1 or i == len(st) - 2:
+            f = 0.0 if x1 == x0 else float(np.clip((s - x0) / (x1 - x0), 0.0, 1.0))
+            rgb = tuple(c0[j] + f * (c1[j] - c0[j]) for j in range(3))
+            return rgb + (alpha_min + (alpha_max - alpha_min) * s,)
+    return st[-1][1] + (alpha_max,)
+
+
+def _rasterise_severity(tiles, shape, tile):
+    """Per-pixel severity map (nan where the window was excluded)."""
+    out = np.full(shape, np.nan, dtype=float)
+    for t in tiles:
+        if t.get("class") == -1:
+            continue
+        y0, x0 = t["y0"], t["x0"]
+        out[y0:y0 + tile, x0:x0 + tile] = float(t.get("severity", 0.0))
+    return out
+
+
 def _rasterise_classes(tiles, shape, tile):
     """Pixel-level class map of the tile grid (worst class wins where tiles overlap).
 
@@ -486,6 +522,28 @@ def analyse_image(path, pixel_nm=None, tile=None, step=None, qc=None,
             # disordered, otherwise coarse/patchy textures are all reported as unprocessed.
             textured = (t["coherence"] >= qc["coherence_texture"])
             t["class"] = CLASS_ORDERED if ordered else (CLASS_DISORDERED if textured else CLASS_BARE)
+            # continuous "how far outside the acceptance band" score in [0, 1].
+            # Every gate is turned into a ratio r = measured / allowed: r <= 1 means the
+            # window is inside that band, r = 2 means it is twice as far out as allowed.
+            # The window takes the worst ratio, and 0 -> 1 maps r = 1 -> r = 2.5, so the
+            # tint moves smoothly from pale yellow to deep red instead of jumping at the
+            # threshold.
+            c_min = qc["coherence_ordered"]
+            ac_req = max(qc["ac_floor"], qc["ac_rel"] * ac_med)
+            # a gate that cannot be evaluated (e.g. the field period itself could not be
+            # fitted) is skipped rather than scored as a total failure, otherwise every
+            # window of such a field would come out deep red with no gradation at all
+            fam_per = fams[k_fam]["period_nm"] if 0 <= k_fam < len(fams) else np.nan
+            parts = []
+            if np.isfinite(dlam) and tol_eff and np.isfinite(fam_per):
+                parts.append(dlam / tol_eff)
+            if np.isfinite(d_ang):
+                parts.append(d_ang / max(qc["angle_tol_deg"], 1e-6))
+            parts.append(c_min / max(t["coherence"], 1e-3))
+            parts.append(ac_req / max(t["ac_strength"], 1e-4))
+            r = max(parts) if parts else 1.0
+            t["excess_ratio"] = float(r)
+            t["severity"] = 0.0 if ordered else float(np.clip((r - 1.0) / 1.5, 0.0, 1.0))
 
         n = len(tiles)
         # ---- area fractions on the rasterised map (overlapping tiles counted once) ----
@@ -766,18 +824,22 @@ def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
     ax.axis("off")
 
     n_bad = 0
+    worst = 0.0
     for t in res.get("_tiles", []):
         cls = t["class"]
-        if cls == CLASS_ORDERED:
-            continue                            # good area: left untouched
-        st = _CLASS_STYLE.get(cls, _CLASS_STYLE[CLASS_BARE])
+        if cls == -1:
+            continue
+        sev = float(t.get("severity", 1.0 if cls == CLASS_BARE else 0.0))
+        if cls == CLASS_ORDERED or sev <= 0.0:
+            continue                            # inside the band: left untouched
+        rgb = quality_rgba(sev)                 # pale yellow -> deep red, alpha 0.15-0.45
         # flat translucent colour only — no hatching and no cell borders, so the SEM
         # structure stays visible inside the marked area
         ax.add_patch(Rectangle((t["x0"], t["y0"]), tile, tile,
-                               facecolor=st["color"], alpha=st["alpha"],
+                               facecolor=rgb[:3], alpha=rgb[3],
                                edgecolor="none", lw=0.0, zorder=3))
-        if cls >= 0:
-            n_bad += 1
+        n_bad += 1
+        worst = max(worst, sev)
 
     # outline the analysed field (the tiled part of the frame; the instrument footer
     # below it is not analysed)
@@ -792,8 +854,10 @@ def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
                 bbox=dict(facecolor=(0, 0, 0, 0.45), edgecolor="none", pad=2.5))
 
     if label:
+        lam_txt = (f"{res['period_nm']:.0f} nm" if np.isfinite(res.get('period_nm', np.nan))
+                   else "not measurable")
         stats = (f"{res['coupon']}\n"
-                 f"Λ = {res['period_nm']:.0f} nm    C = {res['coherence']:.2f}\n"
+                 f"Λ = {lam_txt}    C = {res['coherence']:.2f}\n"
                  f"ordered {100*res.get('ordered_frac', np.nan):.0f} %   "
                  f"disordered {100*res.get('disordered_frac', np.nan):.0f} %   "
                  f"bare {100*res.get('bare_frac', np.nan):.0f} %")
@@ -806,16 +870,27 @@ def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
                     fontsize=12, color=(0.75, 1, 0.75), va="top", ha="right",
                     bbox=dict(facecolor=(0, 0, 0, 0.72), edgecolor="none", pad=4), zorder=8)
         else:
-            handles = [Patch(facecolor=_CLASS_STYLE[CLASS_DISORDERED]["color"], alpha=0.65,
-                             edgecolor="none", label=_CLASS_STYLE[CLASS_DISORDERED]["label"]),
-                       Patch(facecolor=_CLASS_STYLE[CLASS_BARE]["color"], alpha=0.75,
-                             edgecolor="none", label=_CLASS_STYLE[CLASS_BARE]["label"]),
-                       Patch(facecolor="none", edgecolor=(0.85, 0.85, 0.85), lw=1.0,
-                             label="ordered  (not marked)")]
-            leg = ax.legend(handles=handles, loc="upper right", fontsize=11, framealpha=0.80,
-                            facecolor="black", labelcolor="white", borderpad=0.7,
-                            handlelength=1.6, labelspacing=0.55)
-            leg.set_zorder(9)
+            # gradient legend: the tint is a continuous "how far off-spec" scale, not a
+            # set of categories, so a colour bar says it better than two swatches
+            n = 128
+            rgba = np.array([[quality_rgba(v) for v in np.linspace(0, 1, n)]])
+            ax.add_patch(Rectangle((0.572, 0.868), 0.418, 0.092, transform=ax.transAxes,
+                                   facecolor=(0, 0, 0, 0.62), edgecolor=(1, 1, 1, 0.35),
+                                   lw=0.8, zorder=8, clip_on=False))
+            cax = ax.inset_axes([0.585, 0.905, 0.395, 0.020], zorder=9)
+            cax.imshow(rgba, aspect="auto", extent=(0, 1, 0, 1), origin="lower")
+            cax.set_xticks([]); cax.set_yticks([])
+            for sp in cax.spines.values():
+                sp.set_color((1, 1, 1, 0.65)); sp.set_linewidth(0.8)
+            ax.text(0.585, 0.932, "marginally off-spec", transform=ax.transAxes,
+                    fontsize=10.5, color="white", ha="left", va="bottom", zorder=9,
+                    bbox=dict(facecolor=(0, 0, 0, 0.55), edgecolor="none", pad=2.2))
+            ax.text(0.980, 0.932, "far off-spec / no texture", transform=ax.transAxes,
+                    fontsize=10.5, color="white", ha="right", va="bottom", zorder=9,
+                    bbox=dict(facecolor=(0, 0, 0, 0.55), edgecolor="none", pad=2.2))
+            ax.text(0.585, 0.882, "unmarked = inside the acceptance band", transform=ax.transAxes,
+                    fontsize=9.5, color=(0.92, 0.92, 0.92), ha="left", va="top", zorder=9,
+                    bbox=dict(facecolor=(0, 0, 0, 0.55), edgecolor="none", pad=2.0))
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     fig.savefig(out_path, dpi=100, facecolor="black")
