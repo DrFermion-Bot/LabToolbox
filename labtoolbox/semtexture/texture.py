@@ -271,7 +271,10 @@ def _debris(img, px_nm, min_area_px=20, threshold_mad=8.0):
 def _sidecar_pixel_nm(path):
     """Read the pixel size from a JSM ``*.txt`` sidecar next to the image."""
     stem = os.path.splitext(path)[0]
-    for cand in (stem + ".txt", stem + "_e.txt"):
+    d, b = os.path.split(stem)
+    cands = [stem + ".txt", stem + "_e.txt",
+             os.path.join(d, "1", b + ".txt"), os.path.join(d, "1", b + "_e.txt")]
+    for cand in cands:
         if os.path.exists(cand):
             try:
                 txt = open(cand, encoding="utf-8", errors="replace").read()
@@ -478,8 +481,10 @@ def analyse_image(path, pixel_nm=None, tile=None, step=None, qc=None,
                        and dlam <= tol_eff
                        and d_ang <= qc["angle_tol_deg"]
                        and t["ac_strength"] >= max(qc["ac_floor"], qc["ac_rel"] * ac_med))
-            textured = (t["coherence"] >= qc["coherence_texture"]
-                        and np.isfinite(t["period_nm"]))
+            # "bare" must mean *no directional texture at all*, not "the period could not
+            # be fitted": a window with directional structure but an unmeasurable period is
+            # disordered, otherwise coarse/patchy textures are all reported as unprocessed.
+            textured = (t["coherence"] >= qc["coherence_texture"])
             t["class"] = CLASS_ORDERED if ordered else (CLASS_DISORDERED if textured else CLASS_BARE)
 
         n = len(tiles)
@@ -553,8 +558,13 @@ def _discover(folder, exts=(".bmp", ".tif", ".tiff", ".png", ".jpg", ".jpeg"),
     for root, _dirs, files in os.walk(folder):
         if excl and any(x in root.lower().replace(os.sep, "/") for x in excl):
             continue
+        # never re-ingest our own output folders
+        if "qc_report" in root.lower().replace(os.sep, "/").split("/"):
+            continue
         for f in sorted(files):
             if f.lower().endswith(exts) and not f.startswith("."):
+                if f.lower().endswith(("_quality.png", "_pair.png", "_marked.png")):
+                    continue
                 p = os.path.join(root, f)
                 if excl and any(x in p.lower().replace(os.sep, "/") for x in excl):
                     continue
@@ -562,7 +572,20 @@ def _discover(folder, exts=(".bmp", ".tif", ".tiff", ".png", ".jpg", ".jpeg"),
                 if os.path.abspath(root) == os.path.abspath(folder):
                     grp = os.path.basename(folder)
                 out.append((grp, p))
-    return out
+    # drop "<name>.<ext>" when an enhanced "<name>_e.<ext>" exists in the same folder or
+    # one level up (the 650 nm tree keeps the raw copies in <sample>/1/ and the enhanced
+    # ones in <sample>/ — without this every field is counted twice)
+    have = {os.path.splitext(p)[0].lower() for _g, p in out}
+    kept = []
+    for grp, p in out:
+        s = os.path.splitext(p)[0]
+        parent = os.path.dirname(os.path.dirname(s))
+        cands = {s.lower() + "_e",
+                 os.path.join(parent, os.path.basename(s) + "_e").lower()} if parent else {s.lower() + "_e"}
+        if any(c in have for c in cands):
+            continue
+        kept.append((grp, p))
+    return kept
 
 
 def _batch_stats(df, criteria):
@@ -802,7 +825,7 @@ def annotate_image(path, out_path, res=None, linewidth=1.2, label=True):
 
 def annotate_folder(folder, out_dir, pixel_nm=None, tile=None, step=None,
                     qc=None, suffix="_quality", verbose=True, tile_um=DEFAULT_TILE_UM,
-                    exclude=None):
+                    exclude=None, results=None):
     """Annotated copies (poor areas marked) of every image under *folder*.
 
     Keeps the group sub-folder structure, writes ``<stem><suffix>.png`` and returns
@@ -812,8 +835,10 @@ def annotate_folder(folder, out_dir, pixel_nm=None, tile=None, step=None,
     rows = []
     for grp, path in _discover(folder, exclude=exclude):
         try:
-            res = analyse_image(path, pixel_nm=pixel_nm, tile=tile, step=step, qc=qc,
-                                tile_um=tile_um)
+            res = (results or {}).get(path)
+            if res is None:
+                res = analyse_image(path, pixel_nm=pixel_nm, tile=tile, step=step, qc=qc,
+                                    tile_um=tile_um)
         except Exception as exc:
             if verbose:
                 print(f"  !! {os.path.basename(path)}: {exc}")
