@@ -304,7 +304,7 @@ def fig_pair(orig_path, ann_png, out_png, title=""):
 
 # ------------------------------------------------------------------- builder
 def build(folder, report_dir=None, title=None, tile_um=DEFAULT_TILE_UM,
-          pixel_nm=None, verbose=True, mixed=False, coupon=None):
+          pixel_nm=None, verbose=True, mixed=False, coupon=None, keep_pairs=False):
     folder = os.path.abspath(folder)
     report_dir = os.path.abspath(report_dir or folder)
     name = os.path.basename(folder.rstrip("\\/")) or "sample"
@@ -552,6 +552,11 @@ def build(folder, report_dir=None, title=None, tile_um=DEFAULT_TILE_UM,
         shutil.copy2(tmp_pdf, pdf_path)
     except Exception as exc:
         print("  !! PDF failed:", exc)
+
+    # the appendix pairs are embedded in the docx; keeping the standalone PNGs would add
+    # ~40 MB per sample to OneDrive for nothing
+    if not keep_pairs:
+        shutil.rmtree(pdir, ignore_errors=True)
 
     return dict(report_dir=report_dir, docx=docx_path,
                 pdf=pdf_path if os.path.exists(pdf_path) else None,
