@@ -189,6 +189,13 @@ def table(doc, header, rows, widths=None, font=Pt(8.2)):
         for row in tbl.rows:
             for i, w in enumerate(widths):
                 row.cells[i].width = Cm(w)
+    # keep short tables on one page: Word happily splits a 9-row table after row 6, and
+    # "keep with next" on every row but the last pushes the whole block to the next page
+    if len(rows) <= 15:
+        for row in tbl.rows[:-1]:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    p.paragraph_format.keep_with_next = True
     for cell in tbl.rows[-1].cells:
         for p in cell.paragraphs:
             p.paragraph_format.keep_with_next = True
@@ -393,8 +400,12 @@ def build(folder, report_dir=None, title=None, tile_um=DEFAULT_TILE_UM,
     n_coupons = 1 if mixed else df["coupon"].nunique()
     lam = df["period_nm"].to_numpy(float)
     lam_ok = lam[np.isfinite(lam)]
+    # orientation is an *axial* quantity (mod 180°): a plain arithmetic mean turns two
+    # fields at 1° and 179° into 90°, which is why the mean has to be taken on 2θ and halved
     th = np.radians(df["theta_deg"].to_numpy(float) * 2.0)
     R = np.abs(np.mean(np.exp(1j * th))) if len(th) else np.nan
+    th_m = (float(np.degrees(np.angle(np.mean(np.exp(1j * th)))) / 2.0) % 180.0
+            if len(th) else np.nan)
     th_sd = float(np.degrees(np.sqrt(max(-2 * np.log(max(R, 1e-12)), 0))) / 2.0) if len(th) else np.nan
     cv = 100.0 * np.nanstd(lam_ok, ddof=1) / np.nanmean(lam_ok) if lam_ok.size > 1 else np.nan
     single = (n_coupons == 1)
@@ -439,7 +450,7 @@ def build(folder, report_dir=None, title=None, tile_um=DEFAULT_TILE_UM,
     worst = df.loc[df["ordered_frac"].idxmin()] if len(df) else None
     para(doc,
          f"The ripple period of this set is **{np.nanmean(lam_ok):.1f} ± {np.nanstd(lam_ok, ddof=1):.1f} nm** "
-         f"({basis} CV {cv:.2f} %), the orientation **{df['theta_deg'].mean():.1f}°** with a circular SD of "
+         f"({basis} CV {cv:.2f} %), the orientation **{th_m:.1f}°** (axial, mod 180°) with a circular SD of "
          f"{th_sd:.1f}°, and the mean coherence **{df['coherence'].mean():.3f}**. "
          f"Of the analysed area **{100*df['ordered_frac'].mean():.1f} % satisfies the texture acceptance "
          f"test**, {100*df['disordered_frac'].mean():.1f} % carries a texture that misses it and "
