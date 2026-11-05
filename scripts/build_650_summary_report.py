@@ -113,7 +113,6 @@ def welch(raw, t, area, col='total'):
         return np.nan
     return float(stats.ttest_ind(c, s, equal_var=False).pvalue)
 
-
 # ------------------------------------------------------------------ main
 def main():
     ap = argparse.ArgumentParser()
@@ -168,6 +167,18 @@ def main():
                 except Exception:
                     pass
 
+    def is_excluded(lb, sp, t, ar):
+        """True when the exclusion registry removes this (repeat, species, time, area)."""
+        if not len(EX):
+            return False
+        ex_area = (EX['area'].fillna('').astype(str)
+                   .str.replace(r'\.0$', '', regex=True).str.strip())
+        m = ((EX['repeat'].astype(str).str.strip() == lb) &
+             (EX['species'].astype(str).str.strip() == sp) &
+             (EX['time'].astype(str).str.strip() == t) &
+             ((ex_area == '') | (ex_area == str(ar))))
+        return bool(m.any())
+
     def rv(lb, sp, t, ar, col):
         df = R[lb]
         g = df[(df.species == sp) & (df.time == t) & (df.area == ar)]
@@ -208,7 +219,8 @@ def main():
                 sg = {sign(v) for v in vals if np.isfinite(v)}
                 sg = {x for x in sg if x != '0'}
                 mv, sdv = comb_aa(sp, t, ar)
-                ps = [welch(raws[lb].get(sp), t, ar) for lb in labels]
+                ps = [np.nan if is_excluded(lb, sp, t, ar)
+                      else welch(raws[lb].get(sp), t, ar) for lb in labels]
                 nsig = sum(1 for p in ps if np.isfinite(p) and p < 0.05)
                 n_ok = int(sum(1 for v in vals if np.isfinite(v)))
                 rows_consist.append(dict(species=sp, area=nm, time=t, vals=vals,
@@ -492,7 +504,8 @@ def main():
     for sp in ('E. coli', 'S. aureus'):
         for ar, nm in (('1', 'LIPSS'), ('2', 'Nanopillar')):
             for t in TIMES:
-                ps = [welch(raws[lb].get(sp), t, ar) for lb in labels]
+                ps = [np.nan if is_excluded(lb, sp, t, ar)
+                      else welch(raws[lb].get(sp), t, ar) for lb in labels]
                 vals = [aav(sp, t, ar, lb) for lb in labels]
                 mv, sdv = comb_aa(sp, t, ar)
                 rows.append([sp, t.replace('h', ' h'), nm]
