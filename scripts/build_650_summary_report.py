@@ -120,6 +120,9 @@ def main():
     ap.add_argument('--rep', action='append', default=[], help='"label=count dir"')
     ap.add_argument('--out', default='')
     ap.add_argument('--date', default='20261029')
+    ap.add_argument('--minpx', type=int, default=3,
+                    help='minimum particle size used in the counting run')
+
     ap.add_argument('--exclusions', default='',
                     help='exclusion registry CSV (default <figdir>/650nm_exclusions_<date>.csv)')
     a = ap.parse_args()
@@ -317,8 +320,8 @@ def main():
         'each field imaged in a green (live) and a red (dead) channel. One repeat = 8 folders x '
         '30 images = 240 images; all %d repeats = %d images.' % (len(labels), 240 * len(labels)),
         'Counting: ImageJ 1.54 headless, adaptive threshold (background mode + 40), Analyze '
-        'Particles size 3-500 px, 40x field area 46 946.10 um2. Density = count / 46 946.10 um2 '
-        'x 1e8 cells/cm2.',
+        'Particles size %d-500 px, 40x field area 46 946.10 um2. Density = count / 46 946.10 '
+        'um2 x 1e8 cells/cm2.' % a.minpx,
         'Viability = pooled live / (live + dead) over the 5 fields of a condition. '
         'Anti-adhesion = (N_control - N_surface) / N_control x 100, computed for total cells '
         '(live + dead) and for live cells separately.',
@@ -637,10 +640,11 @@ def main():
         'plot_650_multirepeat.py (figures, any number of repeats), '
         'build_650_exclusion_registry.py (exclusion registry), '
         'build_650_summary_report.py (this report). Repository github.com/DrFermion/LabToolbox.',
-        'Reproduce: recount each repeat with recount_650_repeat2_imagej.py --repeats "<repeat>" '
-        '--minpx 3, then build_650_exclusion_registry.py with one --rep per repeat, then '
-        'plot_650_multirepeat.py with the same --rep list plus --exclusions <registry CSV> '
-        '--exclude-3, then this report builder with --exclusions <registry CSV>.',
+        ('Reproduce: recount each repeat with recount_650_repeat2_imagej.py --repeats '
+         '"<repeat>" --minpx %d, then build_650_exclusion_registry.py with one --rep per '
+         'repeat, then plot_650_multirepeat.py with the same --rep list plus --exclusions '
+         '<registry CSV> --exclude-3, then this report builder with --exclusions '
+         '<registry CSV> --minpx %d.' % (a.minpx, a.minpx)),
     ])
 
     docx_path = os.path.join(SCRATCH, '650nm_repeats_summary_report_%s.docx' % a.date)
