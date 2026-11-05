@@ -136,7 +136,7 @@ def panel_stacked_n(ax, cd, times, title, labels, marks=True, excluded=(), excl_
             v = cd[col].max(skipna=True)
             if np.isfinite(v):
                 ymax = max(ymax, float(v))
-    if excl_rows is not None and len(excl_rows):
+    if excl_rows is not None and len(excl_rows) and not CLIP_EXCLUDED:
         v = (excl_rows['live_cm2'].fillna(0) + excl_rows['dead_cm2'].fillna(0)).max()
         if np.isfinite(v):
             ymax = max(ymax, float(v))
@@ -154,11 +154,16 @@ def panel_stacked_n(ax, cd, times, title, labels, marks=True, excluded=(), excl_
                        hatch='///', zorder=3)
                 ax.bar(x, dd, 0.9, bottom=lv, color='#E6E6E6', edgecolor='#5F5F5F',
                        linewidth=0.5, hatch='///', zorder=3)
+                off = (lv + dd) > ymax * 0.94
                 if np.isfinite(float(r['viability'].iloc[0])):
-                    ax.text(x, lv + dd + ymax * 0.012, '%.0f%%' % float(r['viability'].iloc[0]),
-                            ha='center', va='bottom', fontsize=6.8, color='#8A8A8A')
-                ax.text(x, (lv + dd) * 0.5, 'excluded', rotation=90, fontsize=5.6,
-                        color='#4F4F4F', ha='center', va='center', zorder=8,
+                    if off:
+                        pass   # off-scale excluded bar: keep the 'excluded' tag only
+                    else:
+                        ax.text(x, lv + dd + ymax * 0.012,
+                                '%.0f%%' % float(r['viability'].iloc[0]),
+                                ha='center', va='bottom', fontsize=6.8, color='#8A8A8A')
+                ax.text(x, min((lv + dd) * 0.5, ymax * 0.62), 'excluded', rotation=90,
+                        fontsize=5.6, color='#4F4F4F', ha='center', va='center', zorder=8,
                         bbox=dict(boxstyle='round,pad=0.1', fc='white', ec='none', alpha=0.7))
             else:
                 no_data.append((t, a))
@@ -263,6 +268,9 @@ def _mark_excluded(ax, xs, excluded, y0, y1, label='EXCLUDED'):
                 bbox=dict(boxstyle='round,pad=0.12', fc='white', ec='none', alpha=0.9))
 
 
+CLIP_EXCLUDED = False      # set from --clip-excluded in main()
+
+
 def mark_dx(n, j):
     """Horizontal offset for the n per-repeat markers inside one bar."""
     if n <= 1:
@@ -301,7 +309,13 @@ def main():
     ap.add_argument('--exclude-3', action='store_true')
     ap.add_argument('--no-marks', action='store_true')
     ap.add_argument('--plain', action='store_true')
+    ap.add_argument('--clip-excluded', action='store_true',
+                    help='scale both axes to the RETAINED values and draw the excluded '
+                         'measurements off-scale (value printed with an arrow at the axis '
+                         'edge) so the real numbers stay readable')
     a = ap.parse_args()
+    global CLIP_EXCLUDED
+    CLIP_EXCLUDED = bool(a.clip_excluded)
     os.makedirs(a.out, exist_ok=True)
 
     reps = [parse_rep(s) for s in a.rep]
@@ -604,6 +618,7 @@ def main():
         excluded_set = set(excluded)
         xbase = {t: i * 3.0 for i, t in enumerate(times)}
         ymin, ymax, vals = 0.0, 0.0, []
+        vals_ok = []
         for t in times:
             g = aa[(aa.species == sp_label) & (aa.time == t)]
             for ar, dx in (('1', -0.62), ('2', 0.62)):
@@ -625,7 +640,8 @@ def main():
                     sd = r[sdcol].iloc[0]
                     sd = float(sd) if np.isfinite(sd) else 0.0
                     vals.append((v - sd, v + sd))
-        for lo, hi in vals:
+                    vals_ok.append((v - sd, v + sd))
+        for lo, hi in (vals_ok if (CLIP_EXCLUDED and vals_ok) else vals):
             ymin, ymax = min(ymin, lo), max(ymax, hi)
         span = max(ymax - ymin, 10.0)
         ymin, ymax = ymin - span * 0.14, ymax + span * 0.16
@@ -648,9 +664,16 @@ def main():
                                    edgecolor='#5F5F5F', linewidth=0.45, hatch='///',
                                    alpha=alpha, zorder=3)
                             if key == 'total' and abs(v) >= 3:
-                                ylab = v + (span * 0.015 if v >= 0 else -span * 0.015)
-                                ax.text(x, ylab, '%.0f' % v, ha='center',
-                                        va='bottom' if v >= 0 else 'top', fontsize=6.2,
+                                if v < ymin or v > ymax:
+                                    clipped_log.append((sp_label, t, ar, v))
+                                    ylab = ymin + span * 0.075 if v < ymin else ymax - span * 0.075
+                                    txt = ('%.0f' % v) + (' \u25bc' if v < ymin else ' \u25b2')
+                                    va = 'bottom' if v < ymin else 'top'
+                                else:
+                                    ylab = v + (span * 0.015 if v >= 0 else -span * 0.015)
+                                    txt = '%.0f' % v
+                                    va = 'bottom' if v >= 0 else 'top'
+                                ax.text(x, ylab, txt, ha='center', va=va, fontsize=6.2,
                                         color='#7A7A7A', zorder=7,
                                         bbox=dict(boxstyle='round,pad=0.12', fc='white',
                                                   ec='none', alpha=0.85))
@@ -770,7 +793,9 @@ def main():
                     out[sp] = st
         return out
 
+    clipped_log = []
     for lb in list(labels) + (['combined'] if len(labels) > 1 else []):
+        clipped_log.clear()
         fs = frame_stats(lb)
         if not fs:
             continue
@@ -899,6 +924,13 @@ def main():
                         for e in ex_lbl]
                 note += ('  EXCLUDED DATA in this repeat (not used in any statistic, shown as a '
                          'grey cross): ' + '; '.join(bits) + '.')
+        if clipped_log:
+            note += ('  Axis scaled to the retained measurements: the excluded bar(s) marked '
+                     'with an arrow at the axis edge are far larger than the rest and would '
+                     'otherwise flatten the plot - %s.'
+                     % '; '.join('%s %s %s at %+.0f %%'
+                                 % (s, tt, AREA_SHORT.get(ar, ar).replace(chr(10), ' '), vv)
+                                 for s, tt, ar, vv in clipped_log))
         if drop_hits:
             note += ('  Omitted from this repeat (staining artefact, superseded by the re-shot '
                      'coupon): ' + '; '.join('%s %s %s'
