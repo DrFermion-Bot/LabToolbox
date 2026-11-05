@@ -76,6 +76,10 @@ DOCUMENTED = [
 def load_counts(dirpath, sp):
     p = os.path.join(dirpath, SP_DIR[sp], 'livedead_raw_counts.csv')
     if not os.path.isfile(p):
+        # never skip silently: a moved/renamed count directory would otherwise drop a whole
+        # repeat from every statistic without a word
+        print('  WARNING: no count table for %s at %s - that repeat/species is NOT in the '
+              'registry' % (sp, p))
         return None
     df = pd.read_csv(p, encoding='utf-8-sig')
     df = df[df.area != '3'].copy()
