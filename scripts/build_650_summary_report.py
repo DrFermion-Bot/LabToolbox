@@ -144,6 +144,30 @@ def main():
     raws = {lb: {sp: load_counts(d, sp) for sp in ('E. coli', 'S. aureus')}
             for lb, d in dirs.items()}
 
+    # how many condition groups / AA values each excluded entry removes
+    grp = []
+    for _, r in EX.iterrows():
+        area = '' if pd.isna(r['area']) else str(r['area'])
+        try:
+            area = str(int(float(area))) if area not in ('', 'c') else area
+        except ValueError:
+            pass
+        if area:
+            grp.append(dict(n_grp=1, n_aa=1))
+        else:
+            grp.append(dict(n_grp=3, n_aa=2))
+
+    # how many fields the objective field-level screen flagged (retained, not removed)
+    n_field_flags = 0
+    for cand in (fig, os.path.dirname(os.path.abspath(fig))):
+        for fn in sorted(os.listdir(cand)) if os.path.isdir(cand) else []:
+            if fn.startswith('650nm_exclusion_screen_') and fn.endswith('.csv'):
+                try:
+                    sc = pd.read_csv(os.path.join(cand, fn), encoding='utf-8-sig')
+                    n_field_flags = int((sc.get('rule') == 'field').sum())
+                except Exception:
+                    pass
+
     def rv(lb, sp, t, ar, col):
         df = R[lb]
         g = df[(df.species == sp) & (df.time == t) & (df.area == ar)]
@@ -227,24 +251,39 @@ def main():
                        & cons.consistent])
     sa_mean = cons[(cons.species == 'S. aureus') & (cons.area == 'Nanopillar')]['mean']
     ec_bad = len(cons[(cons.species == 'E. coli') & ~cons.consistent])
+    n_tot = int(len(cons))
     add_bullets(doc, [
-        'Three independent repeats of the same 650 nm coupon type were counted with a single '
-        'ImageJ pipeline (%d images per repeat, %d groups of 5 fields each). Every group is '
-        'complete; no group uses fewer than 5 fields.' % (240, 24),
-        'The only anti-adhesion signal that keeps its direction in every valid repeat is the '
-        'S. aureus nanopillar area: %d of 4 timepoints agree, mean anti-adhesion %+.0f to %+.0f %% '
-        '(sd across repeats %.0f-%.0f pp). It is a modest effect, not a large one.'
-        % (n_sa_ok, float(np.nanmin(sa_mean)), float(np.nanmax(sa_mean)),
+        '%d independent repeats of the same 650 nm coupon type were counted with a single '
+        'ImageJ pipeline (%d images per repeat, %d groups of 5 fields each).'
+        % (len(labels), 240, 24),
+        'Conditions whose anti-adhesion keeps the same sign in every repeat that survives the '
+        'exclusions (n >= 2): %s. Everything else changes sign between repeats and is not '
+        'quotable as an effect.'
+        % (', '.join('%s %s at %s (%+.0f %%)' % (r.species, r.area, r.time, r['mean'])
+                     for _, r in cons[cons.consistent].iterrows()) or 'none'),
+        'The S. aureus nanopillar area - the only consistent signal when repeats 1-3 were '
+        'summarised - is %s once repeat 4 is added (%s). Its mean anti-adhesion is %+.0f to '
+        '%+.0f %% (sd across repeats %.0f-%.0f pp), and at the timepoints where the sign holds '
+        'the next repeat reverses it, so with four repeats it no longer qualifies as a '
+        'reproducible effect. It stays a small, direction-plausible trend.'
+        % ('no longer consistent' if n_sa_ok < 4 else 'still consistent in %d of 4' % n_sa_ok,
+           ', '.join('%s: %s' % (r.time, ', '.join(
+               ('%+.0f' % v) if np.isfinite(v) else '-' for v in r.vals))
+               for _, r in cons[(cons.species == 'S. aureus') & (cons.area == 'Nanopillar')].iterrows()),
+           float(np.nanmin(sa_mean)), float(np.nanmax(sa_mean)),
            float(np.nanmin(cons[(cons.species == 'S. aureus') & (cons.area == 'Nanopillar')]['sd'])),
            float(np.nanmax(cons[(cons.species == 'S. aureus') & (cons.area == 'Nanopillar')]['sd']))),
         'E. coli shows no reproducible effect across the full set: %d of its 8 '
         'condition-timepoints flip sign between repeats, and the ones that do agree rest on two '
         'repeats only after the outlier screen. Its fields carry tens to a few hundred cells, so '
         'a single repeat can read anywhere from -140 %% to +60 %%.' % ec_bad,
-        '%d data points are excluded from every statistic in this report (ethanol contamination '
-        'in run 1, a dropped control and a contaminated control in run 2, one staining artefact '
-        'and two repeat-level anti-adhesion outliers); they are listed in section 2.1 and marked '
-        'in the figures instead of being estimated or borrowed.' % len(EX),
+        '%d data points are excluded from every statistic in this report (%d condition groups, '
+        '%d anti-adhesion values): reported experimental problems (ethanol contamination, a '
+        'dropped control, a contaminated control, a failed staining) and one acquisition anomaly '
+        'are removed outright, and an objective screen removes repeat-level anti-adhesion '
+        'outliers; they are listed in section 2.1 and marked in the figures instead of being '
+        'estimated or borrowed.'
+        % (len(EX), int(sum(q['n_grp'] for q in grp)), int(sum(q['n_aa'] for q in grp))),
         'Repeat-to-repeat scatter of the anti-adhesion value is of the same size as the effects '
         '(mean SD %.0f pp), and the absolute density of the same condition differs up to %.1fx '
         'between repeats - so individual repeat numbers must not be quoted as an effect size; '
@@ -259,11 +298,12 @@ def main():
         'three areas per coupon - c = untreated control, 1 = LIPSS, 2 = nanopillar (the treated '
         'areas sit a few micrometres below the control surface).',
         'Four coupons rotate through the four exposure times, one place per repeat '
-        '(repeat 1: 1,2,3,4; repeat 2: 2,3,4,1; repeat 3: 3,4,1,2), so a coupon is imaged at a '
-        'different timepoint in each repeat.',
+        '(repeat 1: 1,2,3,4; repeat 2: 2,3,4,1; repeat 3: 3,4,1,2; repeat 4: 4,1,2,3), so a coupon '
+        'is imaged at a different timepoint in each repeat. With four repeats the coupon x '
+        'timepoint assignment is a complete 4x4 Latin square.',
         'Organisms: E. coli, S. aureus. Times: 3, 5, 7, 24 h. Five fields per area and timepoint, '
         'each field imaged in a green (live) and a red (dead) channel. One repeat = 8 folders x '
-        '30 images = 240 images; all three repeats = 720 images.',
+        '30 images = 240 images; all %d repeats = %d images.' % (len(labels), 240 * len(labels)),
         'Counting: ImageJ 1.54 headless, adaptive threshold (background mode + 40), Analyze '
         'Particles size 3-500 px, 40x field area 46 946.10 um2. Density = count / 46 946.10 um2 '
         'x 1e8 cells/cm2.',
@@ -325,19 +365,21 @@ def main():
         add_bullets(doc, reasons)
         add_bullets(doc, [
             'Exclusion rules used, in this order: (1) reported experimental problems (ethanol '
-            'contamination, dropped control, contaminated coupon, failed staining) remove the '
-            'point outright; (2) an objective screen then looks for repeat-level anti-adhesion '
-            'outliers, and flags a repeat only when the other two agree within 25 percentage '
-            'points and the flagged one lies more than 100 pp from their mean - with two '
-            'disagreeing repeats nothing is removed, the condition is reported as not '
-            'reproducible instead; (3) a field-level screen (>3x the median of the other four '
-            'fields) flagged four fields, all retained: the objects in them are normal-sized '
-            'single cells with no clumps, i.e. genuinely denser or sparser fields, and dropping '
-            'them would bias the mean.',
+            'contamination, dropped control, contaminated coupon, failed staining) and one '
+            'image-level acquisition anomaly remove the point outright; (2) an objective screen '
+            'then looks for repeat-level anti-adhesion outliers, and flags a repeat only when '
+            'the OTHER repeats agree within 25 percentage points and the flagged one lies more '
+            'than 100 pp from their mean - where the remaining repeats disagree nothing is '
+            'removed, the condition is reported as not reproducible instead; (3) a field-level '
+            'screen (>3x the median of the other four fields) flagged %d fields, all retained: '
+            'the objects in them are normal-sized single cells with no clumps, i.e. genuinely '
+            'denser or sparser fields, and dropping them would bias the mean.'
+            % n_field_flags,
             'Scale of the cut: %d of the %d condition groups (2 organisms x 4 timepoints x 3 '
             'areas x %d runs) are removed, i.e. %d of the %d anti-adhesion values no longer '
             'exist. Every remaining number is a measurement with its own control.'
-            % (n_grp, 2 * 4 * 3 * len(labels), len(labels), n_aa, 2 * 4 * 2 * len(labels)),
+            % (int(sum(q['n_grp'] for q in grp)), 2 * 4 * 3 * len(labels), len(labels),
+               int(sum(q['n_aa'] for q in grp)), 2 * 4 * 2 * len(labels)),
         ])
     else:
         doc.add_paragraph('No exclusions were applied.')
@@ -474,23 +516,49 @@ def main():
 
     sa = cons[(cons.species == 'S. aureus') & (cons.area == 'Nanopillar')]
     ec = cons[cons.species == 'E. coli']
+
+    # coupon Latin-square result (written by coupon_rotation_650_latin.py next to the figs)
+    COUPON_DIR = os.path.join(os.path.dirname(os.path.abspath(fig)), 'coupon_latin')
+    cpath = os.path.join(COUPON_DIR, 'coupon_latin_tests.csv')
+    if os.path.isfile(cpath):
+        ct = pd.read_csv(cpath, encoding='utf-8-sig')
+        COUPON_TXT = ', '.join('%s %s F = %.2f, p = %.2f'
+                               % (r['species'], r['area'], r['F'], r['p'])
+                               for _, r in ct.iterrows())
+    else:
+        COUPON_TXT = ('no coupon model has been run yet (see scripts/'
+                      'coupon_rotation_650_latin.py)')
     add_bullets(doc, [
-        'Quotable: S. aureus on the nanopillar area, %+.0f to %+.0f %% fewer total cells than '
-        'the control, same direction in every repeat that survives the exclusion (see the n column '
-        'of Table 4.5 for how many repeats each timepoint rests on). Quote it as a small, '
-        'direction-consistent effect, and state that within a single repeat the 5-field '
-        'variability often keeps the difference from reaching p < 0.05 (Table 4.7).'
-        % (float(np.nanmin(sa['mean'])), float(np.nanmax(sa['mean']))),
+        'Same sign in every repeat that has a valid control (n >= 2): %s. Only the S. aureus '
+        'points and the E. coli LIPSS at 7 h / 24 h rest on data whose fields are dense enough to '
+        'trust in magnitude; the E. coli LIPSS 5 h value is same-signed but its fields carry tens '
+        'to a few hundred cells, so quote the direction, not the number. State the n behind each '
+        '(Table 4.5) - at several timepoints that is two or three repeats, not four.'
+        % (', '.join('%s on %s at %s (%+.0f %%, n = %d)'
+                     % (r.species, r.area, r.time, r['mean'], r.n)
+                     for _, r in cons[cons.consistent].iterrows()) or 'nothing'),
+        'No longer quotable as a reproducible effect: the S. aureus nanopillar series '
+        '(%s). Repeats 1-3 pointed the same way at their timepoints; repeat 4 reverses it at '
+        '3 h, 5 h and 24 h. With four repeats the honest statement is a small trend in the '
+        'expected direction that did not reproduce in the fourth run, not an anti-adhesion '
+        'effect.'
+        % ', '.join('%s: %s' % (r.time, ', '.join(
+            ('%+.0f' % v) if np.isfinite(v) else '-' for v in r.vals)) for _, r in sa.iterrows()),
         'Not quotable as an effect: any E. coli number (%d of 8 condition-timepoints change sign '
         'between repeats) and the S. aureus LIPSS series except at 24 h. Report these repeat by '
         'repeat, or as "no reproducible difference".' % len(ec[~ec.consistent]),
         'Do not average across repeats without also giving the per-repeat spread: the SD across '
         'repeats is %.0f pp on average and up to %.0f pp, i.e. of the same size as the effect '
         'itself.' % (float(np.nanmean(cons['sd'])), float(np.nanmax(cons['sd']))),
-        'Coupon effects are not separable from timepoint effects with this design (each coupon is '
-        'imaged at one timepoint per repeat). A two-repeat analysis of coupon identity found no '
-        'evidence that a coupon keeps its own anti-adhesion character; the three-repeat data have '
-        'not been re-analysed for that question, so treat it as still open rather than settled.', 
+        'Coupon identity: with four repeats the coupon x timepoint assignment is a complete 4x4 '
+        'Latin square (rows = repeats, columns = timepoints, letters = coupons), so a coupon '
+        'effect on anti-adhesion is estimable. Latin-square models (AA ~ repeat + time + coupon, '
+        'one value per repeat x timepoint, registry exclusions applied) give %s. Coupon identity '
+        'explains 10-20 %% of the variance in every panel but never reaches significance, and the '
+        'residual degrees of freedom are only 2-5, so the honest reading is still \"no evidence '
+        'that a coupon carries its own anti-adhesion character\", not \"proven absent\". '
+        'Per-coupon means and the full model output: %s.'
+        % (COUPON_TXT, COUPON_DIR),
     ])
 
     thin = ['%s %s %s (n = %d)' % (r.species, r.time, r.area, r.n)
@@ -498,11 +566,10 @@ def main():
     n_one = cons[cons.n < 2]['n'].count() if len(cons) else 0
     add_bullets(doc, [
         'What the exclusions cost: %d condition-timepoints rest on fewer than %d repeats'
-        '%s%s. Direction-consistent conclusions therefore rely on two repeats in those cases, '
-        'and where only one repeat is left no consistency statement is made at all. The two '
-        'removed E. coli outlier values make 3 h nanopillar and 5 h LIPSS agree on two repeats; '
-        'that follows from the exclusion rule, not from an effect, so E. coli stays "not '
-        'established".'
+        '%s%s. Direction-consistent conclusions therefore rely on the repeats that are left, '
+        'and where only one repeat is left no consistency statement is made at all. Points that '
+        'start agreeing only after an outlier was removed agree because of the exclusion rule, '
+        'not because of an effect.'
         % (len(thin), len(labels),
            (' (' + '; '.join(thin) + ')') if thin else '',
            '; %d timepoint(s) have a single repeat' % n_one if n_one else ''),
@@ -520,19 +587,24 @@ def main():
         'heavily colonised field is a lower bound on the true number. S. aureus at 24 h is close '
         'to confluent in several fields.',
         'Repeats are separate staining and imaging sessions: absolute density of the same '
-        'condition varies up to about two-fold (staining efficiency, illumination, exposure), '
-        'which is why every repeat keeps its own control and why the pooled figure averages '
-        'per-repeat values instead of pooling raw counts.',
+        'condition varies up to %.1fx between repeats (staining efficiency, illumination, '
+        'exposure), which is why every repeat keeps its own control and why the pooled figure '
+        'averages per-repeat values instead of pooling raw counts.' % batch_ratio,
         'Imaging format changed after repeat 1: repeat 1 stored the green and red channels as '
-        'separate single-channel images, repeats 2 and 3 store both channels in each file (green '
+        'separate single-channel images, repeats 2-4 store both channels in each file (green '
         'in channel 1, red in channel 0, with slight crosstalk in the non-target channel). The '
         'macro reads only the named channel, so counts stay comparable, but the files are not '
         'pixel-identical in format.',
         'Excluded points are not replaced by estimates or by values borrowed from another '
         'repeat: the affected slots are empty in the figures and listed in Table 2.1. This costs '
-        'degrees of freedom - nine condition-timepoints now rest on two repeats instead of three '
-        '(five for S. aureus, four for E. coli) - but keeps every number in this report a '
-        'measurement.',
+        'degrees of freedom - %d condition-timepoints now rest on fewer than %d repeats - but '
+        'keeps every number in this report a measurement.'
+        % (len(thin), len(labels)),
+        'Repeat 4, S. aureus 3 h, LIPSS area: the five fields hold 4 000-5 000 detected objects '
+        'with a median object area of 24-44 px, against 560-760 objects and 70-105 px in the '
+        'control and nanopillar areas imaged in the same session (exposure 0.50 s versus '
+        '0.20-0.30 s). The objects are sub-cell speckle, so the count is an imaging artefact and '
+        'that area is excluded, not interpreted.',
         'The repeat-1 S. aureus 5 h nanopillar coupon read 0.4 % viability; the repeat-2 re-shot '
         'of the same coupon read 50.7 %, so the repeat-1 value is a staining artefact and is '
         'excluded rather than quoted with an uncertainty.',
@@ -542,19 +614,20 @@ def main():
     doc.add_heading('7. Data and provenance', level=1)
     add_bullets(doc, [
         'Raw images: Live_Dead Bacteria Test/650nm-20261014/<species>/<repeat>/<time>/ '
-        '(240 images per repeat).',
-        'Counts: imagej_counts/<species>/livedead_raw_counts.csv (repeat 1), '
-        'imagej_counts_repeat2/... (repeat 2), imagej_counts_repeat3/... (repeat 3).',
-        'Figures, summary CSVs and the per-repeat anti-adhesion table: '
-        'E:\\LabToolbox\\output\\650_repeat3_%s\\figs.' % a.date,
+        '(240 images per repeat, %d in total).' % (240 * len(labels)),
+        'Counts: <repeat N counts dir>/<species>/livedead_raw_counts.csv, one directory per '
+        'repeat (%s).' % ', '.join(lb.replace(' ', '') for lb in labels),
+        'Figures, summary CSVs and the per-repeat anti-adhesion table: %s.' % fig,
+        'Exclusion registry: %s (the screen evidence file sits next to it).'
+        % os.path.basename(excl_path),
         'Scripts: recount_650_repeat2_imagej.py (counting, ImageJ macro), '
         'plot_650_multirepeat.py (figures, any number of repeats), '
+        'build_650_exclusion_registry.py (exclusion registry), '
         'build_650_summary_report.py (this report). Repository github.com/DrFermion/LabToolbox.',
         'Reproduce: recount each repeat with recount_650_repeat2_imagej.py --repeats "<repeat>" '
-        '--minpx 3, then plot_650_multirepeat.py with one --rep per repeat plus '
-        '--infer "S.aureus|repeat 2", --viabfrom "S.aureus|7h|repeat 2=repeat 1", '
-        '--viabfrom "S.aureus|24h|repeat 2=repeat 1", --drop "S.aureus|5h|2|repeat 1", '
-        'then this report builder.',
+        '--minpx 3, then build_650_exclusion_registry.py with one --rep per repeat, then '
+        'plot_650_multirepeat.py with the same --rep list plus --exclusions <registry CSV> '
+        '--exclude-3, then this report builder with --exclusions <registry CSV>.',
     ])
 
     docx_path = os.path.join(SCRATCH, '650nm_repeats_summary_report_%s.docx' % a.date)

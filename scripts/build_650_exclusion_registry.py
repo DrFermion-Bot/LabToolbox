@@ -60,6 +60,16 @@ DOCUMENTED = [
          detail='The control coupon was contaminated (nearly all dead, only the red channel '
                 'was saved): no usable live/dead pair and no usable control.',
          evidence='dataset note: S.aureus/repeat 2/24h/readme.txt'),
+    dict(repeat='repeat 4', species='S. aureus', time='3h', area='1', level='cell',
+         issue='acquisition anomaly on the LIPSS coupon',
+         detail='Every field of this coupon carries 4 000-5 000 detected objects with a median '
+                'object area of 24-44 px, against 560-760 objects and 70-105 px in the control '
+                'and nanopillar areas of the same run and the same 3 h session (exposure 0.50 s '
+                'here, 0.20-0.30 s there). The objects are sub-cell speckle rather than cocci, '
+                'so the count (8 384 cells/field, i.e. 10x the control) is an artefact of the '
+                'image, not of the surface. The rest of the 3 h block is unaffected.',
+         evidence='pixel-geometry check (object size distribution) + visual inspection, '
+                  '2026-11-05'),
 ]
 
 
@@ -188,29 +198,42 @@ def main():
                                            flagged=False))
                     continue
                 arr = np.array(list(ok.values()), float)
-                # the pair that agrees best
-                pairs = [(i, j) for i in range(len(arr)) for j in range(i + 1, len(arr))]
-                i, j = min(pairs, key=lambda p: abs(arr[p[0]] - arr[p[1]]))
-                k = [x for x in range(len(arr)) if x not in (i, j)][0]
-                pair_gap = abs(arr[i] - arr[j])
-                pair_mean = (arr[i] + arr[j]) / 2
-                dev = abs(arr[k] - pair_mean)
-                flagged = (pair_gap <= a.agree_pp) and (dev > a.outlier_pp)
+                # Generalised screen (works for 3+ repeats): the OTHER repeats must agree
+                # within --agree-pp among themselves, and this one must lie further than
+                # --outlier-pp from their mean. With exactly three repeats this reduces
+                # to the original "best-agreeing pair vs the leftover" rule.
+                pair_means, pair_gaps, devs = [], [], []
+                for k in range(len(arr)):
+                    others = np.delete(arr, k)
+                    pair_gaps.append(float(others.max() - others.min()))
+                    pair_means.append(float(others.mean()))
+                    devs.append(abs(float(arr[k]) - pair_means[-1]))
                 names = list(ok.keys())
                 for idx, lb in enumerate(names):
+                    flagged = (pair_gaps[idx] <= a.agree_pp) and (devs[idx] > a.outlier_pp)
                     screen.append(dict(rule='repeat', repeat=lb, species=sp, time=t, area=ar,
-                                       field='', value=arr[idx], reference=pair_mean if idx == k
-                                       else np.nan, ratio=dev if idx == k else np.nan,
-                                       flagged=bool(flagged and idx == k)))
-                if flagged:
+                                       field='', value=arr[idx], reference=pair_means[idx],
+                                       ratio=devs[idx], flagged=bool(flagged)))
+                # flag at most the single most extreme value (a rule that can cascade would
+                # delete the whole set)
+                cand = [k for k in range(len(arr))
+                        if pair_gaps[k] <= a.agree_pp and devs[k] > a.outlier_pp]
+                if cand:
+                    flagged = True
+                    k = max(cand, key=lambda x: devs[x])
+                    others_txt = ' / '.join('%+.0f' % v for v in np.delete(arr, k))
                     reg.append(dict(level='cell', repeat=names[k], species=sp, time=t, area=ar,
                                     field='', issue='anti-adhesion outlier',
-                                    detail='AA %+.0f %% vs %+.0f / %+.0f %% in the other two '
-                                           'repeats (they agree within %.0f pp; this one lies '
+                                    detail='AA %+.0f %% vs %s %% in the other %d repeats '
+                                           '(they agree within %.0f pp; this one lies '
                                            '%.0f pp from their mean, rule > %.0f pp).'
-                                           % (arr[k], arr[i], arr[j], pair_gap, dev, a.outlier_pp),
+                                           % (arr[k], others_txt, len(arr) - 1,
+                                              pair_gaps[k], devs[k], a.outlier_pp),
                                     evidence='automated screen', rows_removed=0,
                                     source='automated'))
+                else:
+                    flagged = False
+                del flagged
 
     reg_df = pd.DataFrame(reg)
     reg_df['rows_removed'] = reg_df['rows_removed'].fillna(0).astype(int)
