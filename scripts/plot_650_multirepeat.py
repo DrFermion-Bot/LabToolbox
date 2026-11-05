@@ -154,17 +154,23 @@ def panel_stacked_n(ax, cd, times, title, labels, marks=True, excluded=(), excl_
                        hatch='///', zorder=3)
                 ax.bar(x, dd, 0.9, bottom=lv, color='#E6E6E6', edgecolor='#5F5F5F',
                        linewidth=0.5, hatch='///', zorder=3)
+                # excluded slot: hatch + a distinct colour say "not used"; the number is
+                # never put behind the bar or behind a word (white bbox, own colour)
                 off = (lv + dd) > ymax * 0.94
                 if np.isfinite(float(r['viability'].iloc[0])):
                     if off:
-                        pass   # off-scale excluded bar: keep the 'excluded' tag only
+                        ax.text(x, ymax * 0.985, '%d%% \u25bc' % round(
+                            float(r['viability'].iloc[0])), ha='center', va='top',
+                            fontsize=6.4, color='#6B4F8A', fontweight='bold', zorder=9,
+                            bbox=dict(boxstyle='round,pad=0.14', fc='white', ec='#BFBFBF',
+                                      linewidth=0.4, alpha=0.95))
                     else:
-                        ax.text(x, lv + dd + ymax * 0.012,
+                        ax.text(x, lv + dd + ymax * 0.014,
                                 '%.0f%%' % float(r['viability'].iloc[0]),
-                                ha='center', va='bottom', fontsize=6.8, color='#8A8A8A')
-                ax.text(x, min((lv + dd) * 0.5, ymax * 0.62), 'excluded', rotation=90,
-                        fontsize=5.6, color='#4F4F4F', ha='center', va='center', zorder=8,
-                        bbox=dict(boxstyle='round,pad=0.1', fc='white', ec='none', alpha=0.7))
+                                ha='center', va='bottom', fontsize=6.8, color='#6B4F8A',
+                                fontweight='bold', zorder=9,
+                                bbox=dict(boxstyle='round,pad=0.14', fc='white', ec='#BFBFBF',
+                                          linewidth=0.4, alpha=0.95))
             else:
                 no_data.append((t, a))
             continue
@@ -679,14 +685,11 @@ def main():
                                     txt = '%.0f' % v
                                     va = 'bottom' if v >= 0 else 'top'
                                 ax.text(x, ylab, txt, ha='center', va=va, fontsize=6.2,
-                                        color='#7A7A7A', zorder=7,
-                                        bbox=dict(boxstyle='round,pad=0.12', fc='white',
-                                                  ec='none', alpha=0.85))
-                        ax.text(xbase[t] + dx, ymax * 0.92, 'excluded', rotation=90,
-                                fontsize=5.6, color='#4F4F4F', ha='center', va='top',
-                                zorder=8,
-                                bbox=dict(boxstyle='round,pad=0.1', fc='white', ec='none',
-                                          alpha=0.75))
+                                        color='#6B4F8A', fontweight='bold', zorder=9,
+                                        bbox=dict(boxstyle='round,pad=0.14', fc='white',
+                                                  ec='#BFBFBF', linewidth=0.4, alpha=0.95))
+                        # no per-bar 'excluded' word any more: it used to sit over the bar
+                        # and its number. Hatch + the violet value + the legend key carry it.
                     else:
                         no_aa.add((t, ar))
                     continue
