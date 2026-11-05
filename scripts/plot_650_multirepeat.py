@@ -269,6 +269,7 @@ def _mark_excluded(ax, xs, excluded, y0, y1, label='EXCLUDED'):
 
 
 CLIP_EXCLUDED = False      # set from --clip-excluded in main()
+MINPX = 3                  # set from --minpx in main(); printed in the footnote
 
 
 def mark_dx(n, j):
@@ -309,13 +310,17 @@ def main():
     ap.add_argument('--exclude-3', action='store_true')
     ap.add_argument('--no-marks', action='store_true')
     ap.add_argument('--plain', action='store_true')
+    ap.add_argument('--minpx', type=int, default=3,
+                    help='minimum particle size used in the counting run (printed in the '
+                         'footnote)')
     ap.add_argument('--clip-excluded', action='store_true',
                     help='scale both axes to the RETAINED values and draw the excluded '
                          'measurements off-scale (value printed with an arrow at the axis '
                          'edge) so the real numbers stay readable')
     a = ap.parse_args()
-    global CLIP_EXCLUDED
+    global CLIP_EXCLUDED, MINPX
     CLIP_EXCLUDED = bool(a.clip_excluded)
+    MINPX = int(a.minpx)
     os.makedirs(a.out, exist_ok=True)
 
     reps = [parse_rep(s) for s in a.rep]
@@ -891,7 +896,8 @@ def main():
                 'cells than the control. Error bars = delta-method SD')
         note += (' across the %d repeats; empty markers = the individual repeat AA values and '
                  'the bar = their mean.' % len(labels) if is_comb else ' of the field means')
-        note += ('. ImageJ 1.54, adaptive threshold (background mode + 40), size 3-500 px, '
+        note += ('. ImageJ 1.54, adaptive threshold (background mode + 40), size %d-500 px, '
+                 % MINPX + 
                  '40x field area 46 946 um2, n = 5 fields per condition.')
         if any(k[0] == lb for k in EST):
             bits = ['%s %s: control not measurable -> estimated %.0f-%.0f cells/field'
