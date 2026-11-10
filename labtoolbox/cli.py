@@ -87,6 +87,36 @@ def cmd_livedead(args):
     return 0
 
 
+def cmd_livedead_cellcounter(args):
+    """荧光图像 LIVE/DEAD 计数 (repeat/time/area 结构, ImageJ 引擎默认)."""
+    from .livedead_cellcounter import run as ldc_run
+    engine_kw = {}
+    if args.min_size is not None:
+        engine_kw["min_size"] = args.min_size
+    if args.qc_dir:
+        if args.backend == "imagej":
+            engine_kw["qc_dir"] = args.qc_dir
+        else:
+            print("⚠️ --qc-dir 仅在 imagej 引擎下生效, 已忽略 (opencv 引擎无数圈 QC)", file=sys.stderr)
+    result = ldc_run(folder=args.folder, output_dir=args.output,
+                     area_um2=args.area_um2, backend=args.backend,
+                     skip_repeats=tuple(args.skip_repeats or ()), **engine_kw)
+    print(f"✅ LIVE/DEAD 细胞计数完成 (backend={args.backend})")
+    summ = result["summary"]
+    for _, row in summ.iterrows():
+        live = f"{row['live_mean']:.1f} ± {row['live_sd']:.1f}"
+        dead = f"{row['dead_mean']:.1f} ± {row['dead_sd']:.1f}"
+        via = row["viability_pct"]
+        via_s = f"{via:.1f} %" if via == via else "n/a"
+        print(f"   {row['area_label']} @ {row['time']}: live {live}, dead {dead}, "
+              f"viability {via_s} (n={int(row['n'])})")
+    print(f"   原始计数: {result['raw_csv']}")
+    print(f"   汇总表: {result['summary_csv']}")
+    print(f"   ANOVA: {result['anova_csv']}")
+    print(f"   柱状图: {result['figure']}")
+    return 0
+
+
 def cmd_contact_angle(args):
     from .contact_angle import run as ca_run
     result = ca_run(args.theta1, args.theta2, args.liquid1, args.liquid2)
@@ -136,6 +166,8 @@ COMMANDS = {
     "contact-angle": (cmd_contact_angle, "接触角/表面能计算"),
     "surfmetrics": (cmd_surfmetrics, "AFM 表面形貌: 3D 图 + 粗糙度 (Sa/Sq/Sz) + 表面积 (Sdr)"),
     "schematic": (cmd_schematic, "细菌-织构接触示意图 (AFM 流程末端: 3D 黏附图 + 接触几何)"),
+    "livedead-cellcounter": (cmd_livedead_cellcounter,
+                             "LIVE/DEAD 荧光图像细胞计数 (repeat/time/area, 默认 ImageJ 引擎)"),
 }
 
 
@@ -199,6 +231,20 @@ def build_parser():
     p.add_argument("--dpi", type=int, default=190)
     p.add_argument("--no-render", action="store_true", help="只测量出表, 不画图")
 
+    p = sub.add_parser("livedead-cellcounter", help=COMMANDS["livedead-cellcounter"][1])
+    p.add_argument("folder", help="图像根文件夹 (含 repeat1/2/3 → 1h/3h → 区域-通道编号.tif)")
+    p.add_argument("--output", default="output", help="输出目录")
+    p.add_argument("--backend", default="imagej", choices=["imagej", "opencv"],
+                   help="计数引擎: imagej (默认, 方法学口径) / opencv (旧 Python 引擎, 仅排查对照)")
+    p.add_argument("--min-size", type=int, default=None, dest="min_size",
+                   help="最小粒子面积 px (缺省用引擎默认: imagej 3 / opencv 10)")
+    p.add_argument("--area-um2", type=float, default=None, dest="area_um2",
+                   help="每张图对应的面积 µm² (可选, 用于界面密度换算)")
+    p.add_argument("--skip-repeats", nargs="*", default=None, dest="skip_repeats",
+                   metavar="REPEAT", help="跳过无效 repeat, 如 repeat2 (可写多个)")
+    p.add_argument("--qc-dir", default=None, dest="qc_dir",
+                   help="QC 圈图输出目录 (仅 imagej 引擎: 每张图存 <stem>_qc.png)")
+
     p = sub.add_parser("surfmetrics", help=COMMANDS["surfmetrics"][1])
     p.add_argument("--file", default=None, help="高度图文件 (.ibw/.tif/.txt/.xyz/.csv)")
     p.add_argument("--folder", default=None, help="批量: 文件夹内所有 .ibw (如 AFM 原始数据目录)")
@@ -209,7 +255,7 @@ def build_parser():
     p.add_argument("--output", default="output", help="输出目录")
     p.add_argument("--z-mode", default="real", dest="z_mode",
                    help="3D 图 z 轴模式: real (默认, z 与 XY 同比例, 不做纵向夸张) / "
-                        "auto (z 约 xy 尺度的 25%, 起伏扁平时看得清) / 数值放大系数")
+                        "auto (z 约 xy 尺度的 25%%, 起伏扁平时看得清) / 数值放大系数")
     p.add_argument("--no-profiles", action="store_true",
                    help="不出参考线剖面图 (默认会出: 左 3D 等比例 + 横/纵参考线, 右 沿线的深度曲线)")
     p.add_argument("--profile-row", type=int, default=None, help="横参考线所在行 (默认正中)")

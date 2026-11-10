@@ -133,21 +133,19 @@ _CJK_READY = False
 
 
 def _setup_cjk_font():
-    """让图里的中文正常显示 (matplotlib 默认字体没有汉字 → 出豆腐块)."""
+    """让图里的中文正常显示 (matplotlib 默认字体没有汉字 → 出豆腐块).
+
+    字体候选/字体文件按平台定义在 labtoolbox.common.fonts (Windows 雅黑 /
+    macOS PingFang / Linux Noto); 这里保留 surfmetrics 原有的幂等缓存语义.
+    """
     global _CJK_READY
     if _CJK_READY:
         return
-    import matplotlib
-    from matplotlib import font_manager
     try:
-        available = {f.name for f in font_manager.fontManager.ttflist}
-    except Exception:  # noqa: BLE001
-        return
-    for cand in ("Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "Source Han Sans SC"):
-        if cand in available:
-            matplotlib.rcParams["font.sans-serif"] = [cand, "DejaVu Sans"]
-            matplotlib.rcParams["axes.unicode_minus"] = False
-            break
+        from ..common.fonts import setup_matplotlib_cjk
+        setup_matplotlib_cjk()
+    except Exception:  # noqa: BLE001 - 字体只影响显示, 不能阻塞出图
+        pass
     _CJK_READY = True
 
 
