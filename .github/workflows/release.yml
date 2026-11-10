@@ -163,37 +163,32 @@ jobs:
           from pathlib import Path
           import shutil
           app = Path('dist/LabToolbox.app')
-          fw = app / 'Contents/Frameworks/imagej/jre/Contents'
-          res = app / 'Contents/Resources/imagej/jre/Contents'
-          # PyInstaller splits data between Resources and Frameworks and links the
-          # Frameworks copy. codesign refuses a nested bundle whose Info.plist (or
-          # main executable) is a symlink, so replace those two metadata paths with
-          # real copies before signing.
-          if fw.is_dir():
-              for rel in ('Info.plist', 'MacOS/libjli.dylib'):
-                  src, dst = res / rel, fw / rel
-                  if dst.is_symlink() and src.is_file():
-                      dst.unlink()
-                      shutil.copy2(src, dst)
-              sig = fw / '_CodeSignature'
-              if sig.is_symlink():
+          # PyInstaller splits the bundled JRE between Contents/Frameworks and
+          # Contents/Resources. codesign treats the .jre directory as a nested bundle
+          # and fails on its symlinked/moved Info.plist and _CodeSignature. The JRE is
+          # launched directly (Contents/Home/bin/java), so remove the bundle metadata;
+          # then --deep can sign every Mach-O file (java, libjli, dylibs) normally.
+          for rel in ('Contents/Frameworks/imagej/jre/Contents',
+                      'Contents/Resources/imagej/jre/Contents'):
+              base = app / rel
+              if not base.exists():
+                  continue
+              info = base / 'Info.plist'
+              if info.is_symlink() or info.exists():
+                  info.unlink()
+              sig = base / '_CodeSignature'
+              if sig.is_symlink() or sig.is_file():
                   sig.unlink()
-          print('JRE bundle metadata dereferenced for codesign')
+              elif sig.is_dir():
+                  shutil.rmtree(sig)
+          print('JRE bundle metadata removed for codesign')
           PY
 
       - name: Ad-hoc sign macOS app (unsigned release, no Developer ID)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          # PyInstaller's .app stores data in Contents/Resources and symlinks it from
-          # Contents/Frameworks. `codesign --deep` trips over those symlinks, so sign
-          # the app wrapper and verify it without deep bundle traversal. Nested JRE and
-          # Python binaries keep their upstream signatures; the wrapper gets an ad-hoc one.
-          # Sign the bundled JRE bundle first: PyInstaller splits its data, so the
-          # JRE has no valid bundle signature and the app signature would report it
-          # as an unsigned subcomponent.
-          codesign --force --sign - dist/LabToolbox.app/Contents/Frameworks/imagej/jre
-          codesign --force --sign - dist/LabToolbox.app
+          codesign --force --deep --sign - dist/LabToolbox.app
           codesign --verify --strict --verbose=2 dist/LabToolbox.app
           echo "Ad-hoc signature OK (not notarized; users must right-click > Open on first launch)"
 
