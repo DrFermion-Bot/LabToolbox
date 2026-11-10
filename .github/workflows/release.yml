@@ -1,30 +1,53 @@
-name: Build & Release (Win + macOS)
+name: Build & Release (Windows x64 + macOS Intel + macOS Apple Silicon)
 
+# Builds one desktop app per platform, with ImageJ 1.54 + a native Java runtime
+# bundled inside the Windows installer / macOS DMGs (no runtime downloads).
+# Releases are NOT code-signed: no Authenticode certificate and no Apple
+# Developer ID / notarization. See docs/INSTALL.md for the unsigned-install
+# workarounds (SmartScreen / Gatekeeper) and how to add signing later.
 on:
   push:
     tags:
-      - "v*"          # 推送 v0.1.0 等标签时触发
-  workflow_dispatch:  # 也支持手动触发 (仅构建, 不发布 — 发布需打 tag)
+      - "v*"          # push a v* tag to build and publish a GitHub Release
+  workflow_dispatch:  # manual run = build only, no release (releases need a tag)
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            artifact: LabToolbox-Windows
-            zipname: LabToolbox-Windows
+          - name: Windows-x64
+            os: windows-latest
+            platform: windows
+            artifact: LabToolbox-Windows-x64
             files: |
-              dist/LabToolbox-Windows.zip
-              installer/*.exe
-          - os: macos-latest
-            artifact: LabToolbox-macOS
-            zipname: LabToolbox-macOS
-            # 只上传 DMG: zip 与 DMG 装的是同一份 .app, 两份一起传曾把上传体积翻倍,
-            # 2026-09-20 v0.1.7 那次就是在 ~328 MB 处 ETIMEDOUT 挂掉的。
+              dist/LabToolbox-Windows-x64.zip
+              installer/LabToolbox-Setup-*.exe
+          # GitHub runner labels (actions/runner-images, checked 2026-11-10):
+          #   macos-15-intel = macOS 15 x86_64 (standard Intel runner)
+          #   macos-15      = macOS 15 arm64  (Apple Silicon; "macos-latest" also arm64 nowadays)
+          # macos-14 Intel images were retired on 2026-11-02, so Intel uses macos-15-intel.
+          - name: macOS-Intel
+            os: macos-15-intel
+            platform: macos-intel
+            artifact: LabToolbox-macOS-Intel
+            dmg: LabToolbox-macOS-Intel.dmg
+            volname: LabToolbox (Intel)
             files: |
-              dist/LabToolbox-macOS.dmg
+              dist/LabToolbox-macOS-Intel.dmg
+          - name: macOS-AppleSilicon
+            os: macos-15
+            platform: macos-arm64
+            artifact: LabToolbox-macOS-AppleSilicon
+            dmg: LabToolbox-macOS-AppleSilicon.dmg
+            volname: LabToolbox (Apple Silicon)
+            files: |
+              dist/LabToolbox-macOS-AppleSilicon.dmg
 
     runs-on: ${{ matrix.os }}
 
@@ -35,71 +58,140 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      # One version for the whole release: the git tag (vX.Y.Z) when building a
+      # release, otherwise pyproject.toml (workflow_dispatch / branch builds).
+      - name: Resolve build version
+        id: version
+        shell: bash
         run: |
-          pip install --upgrade pip
-          pip install pyinstaller numpy scipy matplotlib pandas openpyxl statsmodels opencv-python Pillow
+          raw="${GITHUB_REF_NAME}"
+          version=""
+          case "$raw" in
+            v*) version="${raw#v}" ;;
+          esac
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            version="$(python - <<'PY'
+          import re
+          text = open("pyproject.toml", encoding="utf-8").read()
+          match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
+          print(match.group(1) if match else "0.0.0")
+          PY
+          )"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Build version: $version"
 
-      - name: Build with PyInstaller
-        run: pyinstaller labtoolbox.spec --noconfirm
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller \
+            "numpy>=1.24" "scipy>=1.10" "matplotlib>=3.7" "pandas>=2.0" "openpyxl>=3.1" \
+            "statsmodels>=0.14" "opencv-python>=4.8" "Pillow>=10.0" "tifffile>=2023.0"
+          # igor = Bruker .ibw direct read (PyPI "igor" is an empty shell; must come from GitHub)
+          python -m pip install "igor @ git+https://github.com/wking/igor"
 
-      # ---------- Windows: Inno Setup 安装向导 ----------
+      # Assembles vendor/imagej = ImageJ 1.54 ij.jar + platform-native Temurin 11 JRE.
+      - name: Fetch bundled ImageJ + Java runtime
+        shell: bash
+        run: python scripts/fetch_imagej.py --platform ${{ matrix.platform }}
+
+      - name: Build application (PyInstaller)
+        shell: bash
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: pyinstaller labtoolbox.spec --noconfirm --clean
+
+      # Fails the build if ImageJ/JRE/macro/igor are missing or the bundled JRE
+      # reports the wrong CPU architecture (e.g. x86_64 in an Apple Silicon DMG).
+      - name: Verify bundled ImageJ / JRE / macro / igor
+        shell: bash
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: python scripts/verify_bundle.py --platform ${{ matrix.platform }}
+
+      # ---------- Windows: unsigned Inno Setup installer + portable zip ----------
       - name: Install Inno Setup (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          choco install innosetup -y --no-progress
+        run: choco install innosetup -y --no-progress
 
-      - name: Build installer (Windows)
+      - name: Build Windows installer (unsigned)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # 定位 ISCC.exe (choco 安装路径)
           $iscc = Get-ChildItem "C:\Program Files (x86)\Inno Setup*" -Filter "ISCC.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $iscc) {
             $iscc = Get-ChildItem "C:\Program Files\Inno Setup*" -Filter "ISCC.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if (-not $iscc) { Write-Error "ISCC.exe not found"; exit 1 }
           Write-Output "ISCC: $($iscc.FullName)"
-          # 版本号优先从 tag 提取 (v0.1.4 -> 0.1.4); 手动 workflow_dispatch 没有 tag,
-          # GITHUB_REF_NAME 会是分支名 (master), 直接喂给 Inno Setup 会报错 —— 退回读 pyproject 的版本。
-          $tagVer = $env:GITHUB_REF_NAME -replace '^v', ''
-          if ($tagVer -notmatch '^\d+\.\d+') {
-            $tagVer = (Select-String -Path pyproject.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
-            Write-Output "非 tag 运行, 版本号改取自 pyproject.toml: $tagVer"
-          }
-          Write-Output "安装包版本: $tagVer"
-          & $iscc.FullName "/DMyAppVersion=$tagVer" "installer.iss"
+          $version = "${{ steps.version.outputs.version }}"
+          # Installer is unsigned on purpose (no Authenticode certificate).
+          & $iscc.FullName "/DMyAppVersion=$version" "installer.iss"
           if ($LASTEXITCODE -ne 0) { Write-Error "ISCC failed with exit code $LASTEXITCODE"; exit $LASTEXITCODE }
-          Get-ChildItem installer/*.exe | ForEach-Object { Write-Output "INSTALLER: $($_.FullName) ($([math]::Round($_.Length/1MB,1)) MB)" }
+          Get-ChildItem installer/*.exe | ForEach-Object { Write-Output "INSTALLER: $($_.Name) ($([math]::Round($_.Length/1MB,1)) MB)" }
 
-      - name: Create zip (Windows)
+      - name: Create portable Windows zip
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/LabToolbox/* -DestinationPath dist/${{ matrix.zipname }}.zip -Force
+          $zip = "dist/LabToolbox-Windows-x64.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          $sevenZip = "$env:ProgramFiles\7-Zip\7z.exe"
+          Push-Location dist
+          try {
+            if (Test-Path $sevenZip) {
+              & $sevenZip a -tzip -mx=5 "LabToolbox-Windows-x64.zip" "LabToolbox"
+              if ($LASTEXITCODE -ne 0) { Write-Error "7z failed"; exit $LASTEXITCODE }
+            } else {
+              Compress-Archive -Path "LabToolbox/*" -DestinationPath "LabToolbox-Windows-x64.zip" -Force
+            }
+          } finally {
+            Pop-Location
+          }
+          Write-Output "ZIP: $((Get-Item $zip).Length / 1MB) MB"
 
-      # ---------- macOS: DMG ----------
-      - name: Create DMG (macOS)
+      # ---------- macOS: ad-hoc signed (NOT notarized) .app -> DMG ----------
+      # Ad-hoc signature is required for arm64 binaries to run at all; it is not
+      # an Apple Developer ID signature and Gatekeeper still warns on first open.
+      - name: Ad-hoc sign macOS app (unsigned release, no Developer ID)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          hdiutil create -volname "LabToolbox" -srcfolder dist/LabToolbox.app -ov -format UDZO dist/${{ matrix.zipname }}.dmg
+          codesign --force --deep --sign - dist/LabToolbox.app
+          codesign --verify --deep --strict --verbose=2 dist/LabToolbox.app
+          echo "Ad-hoc signature OK (not notarized; users must right-click > Open on first launch)"
+
+      - name: Create macOS DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          hdiutil create -volname "${{ matrix.volname }}" -srcfolder dist/LabToolbox.app -ov -format UDZO "dist/${{ matrix.dmg }}"
+          ls -lh "dist/${{ matrix.dmg }}"
+
+      - name: Report artifact sizes
+        shell: bash
+        run: |
+          echo "### ${{ matrix.name }} artifacts" >> "$GITHUB_STEP_SUMMARY"
+          for f in dist/*.zip dist/*.dmg installer/*.exe; do
+            [ -f "$f" ] || continue
+            echo "- $(basename "$f"): $(du -h "$f" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+          done
+          du -sh dist/LabToolbox 2>/dev/null || du -sh dist/LabToolbox.app 2>/dev/null || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.files }}
-          # zip/dmg 已经压过, 再压一遍纯浪费 CPU 和时间
           compression-level: 0
-          # 产物在 Release 页面还有一份, 这里只留两周, 免得 Actions 存储越堆越大
           retention-days: 14
-          if-no-files-found: warn
+          if-no-files-found: error
 
   release:
     needs: build
-    # 手点 workflow_dispatch 时只构建、不发布 (发布一律走 tag)
+    # Manual workflow_dispatch runs build only; releases are created from v* tags.
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -109,18 +201,38 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
-      - name: List artifacts
-        run: find artifacts -type f | head -20
+      - name: List release files
+        shell: bash
+        run: find artifacts -type f -exec ls -lh {} +
 
-      - name: Create Release
+      - name: Create release (unsigned builds)
         uses: softprops/action-gh-release@v2
         with:
-          name: labtoolbox ${{ github.ref_name }}
+          name: LabToolbox ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: false
-          generate_release_notes: true
+          body: |
+            LabToolbox ${{ github.ref_name }} — one desktop app, Windows x64 + macOS Intel + macOS Apple Silicon.
+
+            **These builds are unsigned.** There is no Windows Authenticode certificate and no
+            Apple Developer ID signature/notarization, so Windows SmartScreen and macOS Gatekeeper
+            will warn on first launch. See docs/INSTALL.md in this tag for the exact workarounds.
+
+            | Platform | Download | Notes |
+            |---|---|---|
+            | Windows x64 | `LabToolbox-Setup-<version>.exe` (installer) or `LabToolbox-Windows-x64.zip` (portable) | SmartScreen: More info → Run anyway |
+            | macOS Intel | `LabToolbox-macOS-Intel.dmg` | For x86_64 Macs |
+            | macOS Apple Silicon | `LabToolbox-macOS-AppleSilicon.dmg` | For M1/M2/M3/M4 Macs |
+
+            The installer/DMG already include ImageJ 1.54 and a private Java runtime for the
+            LIVE/DEAD cell counter — no Python, ImageJ or Java installation is needed, and the
+            app never downloads anything on first use.
+
+            Install guide: https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/INSTALL.md
+            Module docs: https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/modules/README.md
           files: |
             artifacts/**/*.zip
             artifacts/**/*.dmg
