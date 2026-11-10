@@ -27,7 +27,9 @@ ImageJ's `ij.jar` and a separately downloaded Java runtime are placed together i
   `https://wsr.imagej.net/distros/win/ij154-win-java8.zip` (the same jar is in the
   macOS distribution).
 - In this project ImageJ is used as an optional external counting engine for the
-  `livedead_cellcounter` module (headless `Analyze Particles` batch macro
+  `livedead_cellcounter` module (ImageJ `-batch` macro mode on the desktop JVM,
+  not JVM-headless mode - ImageJ 1.x cannot execute `run()` commands without a
+  desktop toolkit - using `Analyze Particles`; macro
   `scripts/imagej/count_livedead.ijm`).
 - Please cite: Schneider CA, Rasband WS, Eliceiri KW. *NIH Image to ImageJ: 25
   years of image analysis.* Nature Methods 9, 671–675 (2012).
