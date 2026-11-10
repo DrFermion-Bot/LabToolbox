@@ -155,6 +155,32 @@ jobs:
       # ---------- macOS: ad-hoc signed (NOT notarized) .app -> DMG ----------
       # Ad-hoc signature is required for arm64 binaries to run at all; it is not
       # an Apple Developer ID signature and Gatekeeper still warns on first open.
+      - name: Prepare macOS JRE bundle metadata for codesign
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          app = Path('dist/LabToolbox.app')
+          fw = app / 'Contents/Frameworks/imagej/jre/Contents'
+          res = app / 'Contents/Resources/imagej/jre/Contents'
+          # PyInstaller splits data between Resources and Frameworks and links the
+          # Frameworks copy. codesign refuses a nested bundle whose Info.plist (or
+          # main executable) is a symlink, so replace those two metadata paths with
+          # real copies before signing.
+          if fw.is_dir():
+              for rel in ('Info.plist', 'MacOS/libjli.dylib'):
+                  src, dst = res / rel, fw / rel
+                  if dst.is_symlink() and src.is_file():
+                      dst.unlink()
+                      shutil.copy2(src, dst)
+              sig = fw / '_CodeSignature'
+              if sig.is_symlink():
+                  sig.unlink()
+          print('JRE bundle metadata dereferenced for codesign')
+          PY
+
       - name: Ad-hoc sign macOS app (unsigned release, no Developer ID)
         if: runner.os == 'macOS'
         shell: bash
