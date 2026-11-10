@@ -66,7 +66,9 @@ def surface_energy_from_contact_angles(theta_diiodo, theta_water, theta_form,
     C1 = (l_w[0] + 2*np.sqrt(l_w[1]*l_w[2])) * (1 + np.cos(t2)) / 2 - np.sqrt(l_w[0]*gamma_lw)
     C2 = (l_f[0] + 2*np.sqrt(l_f[1]*l_f[2])) * (1 + np.cos(t3)) / 2 - np.sqrt(l_f[0]*gamma_lw)
     a11, a12 = np.sqrt(l_w[2]), np.sqrt(l_w[1])
-    a21, a22 = np.sqrt(l_f[1]), np.sqrt(l_f[2])
+    # vOCG: the formamide row multiplies sqrt(gamma_S^+) by sqrt(gamma_f^-)
+    # and sqrt(gamma_S^-) by sqrt(gamma_f^+); the two liquid terms are not symmetric.
+    a21, a22 = np.sqrt(l_f[2]), np.sqrt(l_f[1])
     det = a11*a22 - a12*a21
     if abs(det) < 1e-10:
         raise ValueError("病态矩阵: 探测液体酸碱特性太接近")
