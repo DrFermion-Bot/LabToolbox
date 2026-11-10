@@ -23,11 +23,26 @@ dependencies = [
 [project.optional-dependencies]
 image = ["opencv-python>=4.8", "Pillow>=10.0"]
 r = ["rpy2>=3.5"]
-# .ibw (Bruker AFM) 直读: igor 官方包在 GitHub (PyPI 上的 igor 是空壳, 勿装)
+# .ibw (Bruker AFM) direct read: the real igor package lives on GitHub (the PyPI
+# "igor" package is an empty shell - do not install it).
 surf = ["igor @ git+https://github.com/wking/igor"]
+# Everything needed to reproduce the release builds locally:
+#   pip install -e ".[build]"
+#   python scripts/fetch_imagej.py
+#   pyinstaller labtoolbox.spec --noconfirm
+build = [
+    "pyinstaller>=6.0",
+    "igor @ git+https://github.com/wking/igor",
+]
 
 [project.scripts]
 labtoolbox = "labtoolbox.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/DrFermion/LabToolbox"
+Releases = "https://github.com/DrFermion/LabToolbox/releases"
+Documentation = "https://github.com/DrFermion/LabToolbox/blob/master/docs/modules/README.md"
+Issues = "https://github.com/DrFermion/LabToolbox/issues"
 
 [tool.setuptools]
 packages = ["labtoolbox",
@@ -38,6 +53,8 @@ packages = ["labtoolbox",
             "labtoolbox.livedead",
             "labtoolbox.livedead_cellcounter",
             "labtoolbox.contact_angle",
+            "labtoolbox.contact_schematic",
+            "labtoolbox.semtexture",
             "labtoolbox.surfmetrics"]
 
 [tool.setuptools.package-data]
