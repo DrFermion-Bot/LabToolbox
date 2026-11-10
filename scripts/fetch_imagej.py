@@ -134,7 +134,12 @@ def download(url: str, dest: Path, refresh: bool = False) -> Path:
     log(f"  downloading {dest.name}\n    <- {url}")
     started = time.time()
     last_note = 0.0
-    with urllib.request.urlopen(url, timeout=120) as resp, open(tmp, "wb") as out:
+    # Adoptium's API rejects the default Python-urllib User-Agent with HTTP 403.
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "LabToolbox-build/1.0 (+https://github.com/DrFermion/LabToolbox)"},
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp, open(tmp, "wb") as out:
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0
         while True:
