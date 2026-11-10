@@ -39,7 +39,7 @@ Two counting engines exist:
 | Entry point | How it is used |
 |---|---|
 | GUI tab **🔬 LIVE/DEAD Cell Count** | Image root folder, counting-engine selector (`imagej` / `opencv`) with an ImageJ status line, minimum particle size, output directory; the roundness/green/red entries are sent **only** when `opencv` is selected |
-| CLI `labtoolbox livedead-cellcounter FOLDER` | `--output`, `--backend imagej\|opencv`, `--min-size`, `--area-um2`, `--skip-repeats`, `--qc-dir` |
+| CLI `labtoolbox livedead-cellcounter FOLDER` | `--output`, `--backend imagej\|opencv`, `--min-size`, `--skip-repeats`, `--qc-dir` |
 | Python API | `labtoolbox.livedead_cellcounter.run(folder, output_dir, area_um2, backend, skip_repeats, **engine_kwargs)`; `LiveDeadCellCounter(engine=...).report(...)` for finer control |
 
 ```bash
@@ -47,7 +47,7 @@ labtoolbox livedead-cellcounter path/to/root --output results \
     --backend imagej --min-size 3 --qc-dir results/qc
 ```
 
-Option notes: `--min-size` falls back to the engine default when omitted (ImageJ 3 px², OpenCV 10 px); `--qc-dir` is honoured only by the ImageJ engine (the CLI prints a warning and ignores it for `opencv`); `--area-um2` is accepted but still unused (see limitations); errors surface through the unified CLI as a non-zero exit with a message. The GUI status line shows the discovered ImageJ directory or *“not found (set LABTOOLBOX_IMAGEJ_DIR)”*.
+Option notes: `--min-size` falls back to the engine default when omitted (ImageJ 3 px², OpenCV 10 px); `--qc-dir` is honoured only by the ImageJ engine (the CLI prints a warning and ignores it for `opencv`); errors surface through the unified CLI as a non-zero exit with a message. The GUI status line shows the discovered ImageJ directory or *“not found (set LABTOOLBOX_IMAGEJ_DIR)”*.
 
 ### Outputs
 
@@ -166,7 +166,7 @@ If statsmodels fails, the fallback runs a one-way ANOVA across areas **at each t
 | `CellCounterEngine` | `split_thresh` | `0.1` | watershed foreground fraction of max distance |
 | `LiveDeadCellCounter` | `area_um2` | `None` | unused |
 
-CLI options map 1:1 onto `run()`'s parameters (`--min-size` → `min_size`, `--skip-repeats` → `skip_repeats`, `--qc-dir` → `qc_dir`, `--area-um2` → `area_um2`); `--min-size` defaults to the engine default when omitted. The GUI exposes backend + ImageJ status + minimum size + output folder, plus roundness/thresholds for the OpenCV engine only.
+CLI options map 1:1 onto `run()`'s parameters (`--min-size` → `min_size`, `--skip-repeats` → `skip_repeats`, `--qc-dir` → `qc_dir`); `--min-size` defaults to the engine default when omitted. The GUI exposes backend + ImageJ status + minimum size + output folder, plus roundness/thresholds for the OpenCV engine only.
 
 ### Implementation notes
 
@@ -188,7 +188,7 @@ CLI options map 1:1 onto `run()`'s parameters (`--min-size` → `min_size`, `--s
 * **ANOVA is on log10(live+1) counts**, not viability; `log10=True` is the default, Type II SS, unbalanced cells are not modelled explicitly, no post-hoc tests, no multiplicity correction, no random effect for repeat.
 * **GUI parameter routing (fixed in the integration PR).** The GUI now sends `min_roundness`/`green_thresh`/`red_thresh` **only** when `backend="opencv"` is selected; previously they were passed in ImageJ mode as well and silently dropped by `run()`'s kwarg filter. In ImageJ mode only `min_size` (and optionally `qc_dir` via the API/CLI) is adjustable.
 * **No automatic engine fallback.** If the ImageJ installation, JRE or macro cannot be found, the ImageJ engine raises `FileNotFoundError` listing the searched candidates instead of silently switching engines; pass `--backend opencv` explicitly to use the legacy engine. The GUI shows the discovery status before you run.
-* **`area_um2` is dead code**; no area-normalised density is computed. It is still exposed by the API and by the CLI `--area-um2` option (help text says “interface density conversion”), so it currently does nothing.
+* **`area_um2` is dead code**; no area-normalised density is computed. The Python API still accepts it for backward compatibility, but the unified CLI no longer exposes a flag for it.
 * **Channel-trap heuristic** (brightest channel when named channel is dim) is a pragmatic fix, not a physical measurement; review QC overlays when counts look surprising.
 * `skip_repeats` matches folder names exactly (case-sensitive); pass the names as they appear on disk.
 * **OpenCV backend is retained only for regression/troubleshooting.** Its fixed thresholds and watershed parameters were superseded by the ImageJ method (project decision, 2026-09-11); historical comparison on the 515 nm series (160 paired fields) attributed most ImageJ-vs-OpenCV differences to the old engine lacking the channel-trap correction.
@@ -248,7 +248,7 @@ CLI options map 1:1 onto `run()`'s parameters (`--min-size` → `min_size`, `--s
 | 入口 | 用法 |
 |---|---|
 | GUI 标签页 **🔬 LIVE/DEAD 细胞计数** | 图像根文件夹、计数引擎选择（`imagej` / `opencv`，带 ImageJ 状态行）、最小粒子面积、输出目录；圆形度/绿/红阈值**只在**选 `opencv` 时发送 |
-| CLI `labtoolbox livedead-cellcounter FOLDER` | `--output`、`--backend imagej\|opencv`、`--min-size`、`--area-um2`、`--skip-repeats`、`--qc-dir` |
+| CLI `labtoolbox livedead-cellcounter FOLDER` | `--output`、`--backend imagej\|opencv`、`--min-size`、`--skip-repeats`、`--qc-dir` |
 | Python API | `labtoolbox.livedead_cellcounter.run(folder, output_dir, area_um2, backend, skip_repeats, **engine_kwargs)`；更细控制可用 `LiveDeadCellCounter(engine=...).report(...)` |
 
 ```bash
@@ -256,7 +256,7 @@ labtoolbox livedead-cellcounter path/to/root --output results \
     --backend imagej --min-size 3 --qc-dir results/qc
 ```
 
-选项说明：省略 `--min-size` 时用引擎默认值（ImageJ 3 px²、OpenCV 10 px）；`--qc-dir` 只对 ImageJ 引擎有效（CLI 对 `opencv` 会打印警告并忽略）；`--area-um2` 被接受但仍未使用（见局限）；错误经统一 CLI 以非零退出码和报错信息暴露。GUI 状态行显示探测到的 ImageJ 目录，或 *“未找到 (可设 LABTOOLBOX_IMAGEJ_DIR)”*。
+选项说明：省略 `--min-size` 时用引擎默认值（ImageJ 3 px²、OpenCV 10 px）；`--qc-dir` 只对 ImageJ 引擎有效（CLI 对 `opencv` 会打印警告并忽略）；错误经统一 CLI 以非零退出码和报错信息暴露。GUI 状态行显示探测到的 ImageJ 目录，或 *“未找到 (可设 LABTOOLBOX_IMAGEJ_DIR)”*。
 
 ### 输出
 
@@ -375,7 +375,7 @@ value' ~ C(area_label) * C(time)      # OLS，Type II 平方和
 | `CellCounterEngine` | `split_thresh` | `0.1` | 分水岭前景占最大距离的比例 |
 | `LiveDeadCellCounter` | `area_um2` | `None` | 未使用 |
 
-CLI 选项与 `run()` 参数一一对应（`--min-size` → `min_size`、`--skip-repeats` → `skip_repeats`、`--qc-dir` → `qc_dir`、`--area-um2` → `area_um2`）；省略 `--min-size` 时用引擎默认值。GUI 暴露引擎选择 + ImageJ 状态 + 最小面积 + 输出目录，圆形度/阈值只对 OpenCV 引擎生效。
+CLI 选项与 `run()` 参数一一对应（`--min-size` → `min_size`、`--skip-repeats` → `skip_repeats`、`--qc-dir` → `qc_dir`）；省略 `--min-size` 时用引擎默认值。GUI 暴露引擎选择 + ImageJ 状态 + 最小面积 + 输出目录，圆形度/阈值只对 OpenCV 引擎生效。
 
 ### 实现说明
 
@@ -397,7 +397,7 @@ CLI 选项与 `run()` 参数一一对应（`--min-size` → `min_size`、`--skip
 * **ANOVA 作用于 log10(live+1) 计数**，不是存活率；`log10=True` 是默认，Type II 平方和，不显式建模不平衡单元，无事后检验、无多重比较校正、不把重复当随机效应。
 * **GUI 参数传递（集成 PR 已修复）。** GUI 现在**只在**选择 `backend="opencv"` 时发送 `min_roundness`/`green_thresh`/`red_thresh`；此前它们在 ImageJ 模式下也会传入，随后被 `run()` 的参数过滤静默丢弃。ImageJ 模式下只有 `min_size`（以及 API/CLI 的可选 `qc_dir`）可调。
 * **没有自动引擎回退。** 找不到 ImageJ 安装、JRE 或宏时，ImageJ 引擎抛出 `FileNotFoundError` 并列出搜索候选，而不是静默切换引擎；要用旧引擎请显式传 `--backend opencv`。GUI 会在运行前显示探测状态。
-* **`area_um2` 是死代码**；不计算任何面积归一化密度。API 与 CLI `--area-um2` 选项仍然暴露（帮助文字写的是“界面密度换算”），目前不产生任何效果。
+* **`area_um2` 是死代码**；不计算任何面积归一化密度。Python API 仍接受该参数以保持兼容，但统一 CLI 不再暴露对应选项。
 * **通道陷阱启发式**（命名通道很暗时改数最亮通道）是务实的修正，不是物理测量；计数异常时请查看 QC 叠加图。
 * `skip_repeats` 精确匹配文件夹名（区分大小写）；请按磁盘上的实际名称传入。
 * **OpenCV 后端只为回归/排障保留。** 其固定阈值与分水岭参数已被 ImageJ 方法取代（项目决定，2026-09-11）；515 nm 系列 160 对视野的历史对比显示 ImageJ 与 OpenCV 的差异主要来自旧引擎缺少通道陷阱修正。

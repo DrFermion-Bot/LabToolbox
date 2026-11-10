@@ -64,7 +64,7 @@ The `surfmetrics` helper functions (`load_heightmap`, `plane_subtract`, `despike
 ### Integration state (PR)
 
 * **GUI**: 9 tabs — the ninth is **📐 Contact Schematic** (`contact_schematic`: AFM data folder, sample label, output dir).
-* **CLI**: 9 subcommands — the ninth is **`livedead-cellcounter`** (`FOLDER --backend imagej|opencv --min-size --area-um2 --skip-repeats --qc-dir`).
+* **CLI**: 9 subcommands — the ninth is **`livedead-cellcounter`** (`FOLDER --backend imagej|opencv --min-size --skip-repeats --qc-dir`).
 * **Packaging**: `pyproject.toml` includes all nine packages (`contact_schematic` and `semtexture` were missing at `0e0508e`); release CI builds a Windows installer + portable zip and macOS Intel/Apple-Silicon DMGs. Install/release details: [**docs/INSTALL.md**](../INSTALL.md).
 * **Bundled engine**: installers/DMGs embed ImageJ 1.54 + a platform-native Temurin 11 JRE and ship the counting macro read-only; source checkouts auto-discover ImageJ or accept `LABTOOLBOX_IMAGEJ_DIR`. See [`livedead_cellcounter`](livedead_cellcounter.md).
 * **Fonts**: cross-platform CJK font selection (`labtoolbox.common.fonts`) for the GUI and matplotlib figures.
@@ -136,7 +136,7 @@ LIVE/DEAD 图像 ──► livedead_cellcounter ──► livedead（存活率�
 ### 集成状态（PR）
 
 * **GUI**：9 个标签页——第 9 个是 **📐 接触几何示意**（`contact_schematic`：AFM 数据目录、样品标签、输出目录）。
-* **CLI**：9 个子命令——第 9 个是 **`livedead-cellcounter`**（`FOLDER --backend imagej|opencv --min-size --area-um2 --skip-repeats --qc-dir`）。
+* **CLI**：9 个子命令——第 9 个是 **`livedead-cellcounter`**（`FOLDER --backend imagej|opencv --min-size --skip-repeats --qc-dir`）。
 * **打包**：`pyproject.toml` 包含全部九个包（`contact_schematic` 与 `semtexture` 在 `0e0508e` 时缺失）；发布 CI 构建 Windows 安装包 + 便携 zip 与 macOS Intel/Apple Silicon DMG。安装/发布细节见 [**docs/INSTALL.md**](../INSTALL.md)。
 * **内置引擎**：安装包/DMG 内置 ImageJ 1.54 + 平台原生 Temurin 11 JRE，计数宏随包只读分发；源码运行自动探测 ImageJ，或用 `LABTOOLBOX_IMAGEJ_DIR` 指定。见 [`livedead_cellcounter`](livedead_cellcounter.md)。
 * **字体**：GUI 与 matplotlib 图使用跨平台中文字体选择（`labtoolbox.common.fonts`）。

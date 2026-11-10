@@ -75,7 +75,7 @@ The integration branch that merged these pages differs from the documentation ba
 | Area | Integration state |
 |---|---|
 | GUI | **9 tabs** — adds **📐 接触几何示意** (`contact_schematic`: AFM data folder, sample label, output dir) |
-| CLI | **9 subcommands** — adds **`livedead-cellcounter`** (`folder` positional, `--backend imagej\|opencv`, `--min-size`, `--area-um2`, `--skip-repeats`, `--qc-dir`) |
+| CLI | **9 subcommands** — adds **`livedead-cellcounter`** (`folder` positional, `--backend imagej\|opencv`, `--min-size`, `--skip-repeats`, `--qc-dir`) |
 | Packaging | `pyproject.toml` packages now include **all nine modules** (previously `contact_schematic` and `semtexture` were missing); `[build]` extra; release CI builds a Windows x64 installer + portable zip and macOS Intel/Apple-Silicon DMGs |
 | Bundled engine | installers/DMGs embed **ImageJ 1.54** (unmodified `ij.jar`) + a **native Temurin 11 JRE**; the counting macro is bundled read-only; no runtime downloads |
 | Fonts | platform-appropriate CJK font selection for the GUI and matplotlib figures |
@@ -160,7 +160,7 @@ labtoolbox --help                # 统一 CLI —— 9 个子命令：
 | 方面 | 集成状态 |
 |---|---|
 | GUI | **9 个标签页**——新增 **📐 接触几何示意**（`contact_schematic`：AFM 数据目录、样品标签、输出目录） |
-| CLI | **9 个子命令**——新增 **`livedead-cellcounter`**（`folder` 位置参数，`--backend imagej\|opencv`、`--min-size`、`--area-um2`、`--skip-repeats`、`--qc-dir`） |
+| CLI | **9 个子命令**——新增 **`livedead-cellcounter`**（`folder` 位置参数，`--backend imagej\|opencv`、`--min-size`、`--skip-repeats`、`--qc-dir`） |
 | 打包 | `pyproject.toml` 的包列表现在包含**全部九个模块**（此前缺 `contact_schematic` 与 `semtexture`）；新增 `[build]` extra；发布 CI 构建 Windows x64 安装包+便携 zip 与 macOS Intel/Apple Silicon DMG |
 | 内置引擎 | 安装包/DMG 内置 **ImageJ 1.54**（未修改的 `ij.jar`）+ **平台原生 Temurin 11 JRE**；计数宏随包只读分发；运行时零下载 |
 | 字体 | GUI 与 matplotlib 图按平台选择中文字体 |
