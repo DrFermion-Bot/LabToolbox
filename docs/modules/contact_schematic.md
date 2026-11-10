@@ -6,7 +6,7 @@
 
 ### Purpose and scientific context
 
-`contact_schematic` is the **final step of the AFM analysis workflow**: it measures the real contact-relevant geometry of a laser-textured surface from Bruker `.ibw` height maps (LIPSS period and groove depth; nanopillar spacing and bump height), then renders publication-quality 3-D schematics of bacterial cells resting on that topography plus a contact-geometry diagram. The output is a set of figures (`fig1` LIPSS adhesion, `fig2` nanopillar adhesion, `fig3` contact geometry), a per-file measurement table and an auto-generated README that states every assumption. It is a *schematic* module: cells are rigid geometric bodies placed on measured topography — no XDLVO or mechanical deformation calculation is done here (that is [`xdlvo`](xdlvo.md)).
+`contact_schematic` is the **final step of the AFM analysis workflow**: it measures the real contact-relevant geometry of a laser-textured surface from Bruker `.ibw` height maps (LIPSS period and groove depth; nanopillar spacing and bump height), then renders publication-quality 3-D schematics of bacterial cells resting on that topography plus a contact-geometry diagram. The output is a set of figures (`fig1` LIPSS adhesion, `fig2` nanopillar adhesion, `fig3` contact geometry), a per-file measurement table and an auto-generated README that states every assumption. It is a *schematic* module: cells are rigid geometric bodies placed on measured topography — no XDLVO or mechanical deformation calculation is done here (that is [`xdlvo`](xdlvo.md)). The module is reachable from the GUI (tab **📐 Contact Schematic**), from the unified CLI (`labtoolbox schematic` / `python -m labtoolbox.contact_schematic`) and as a one-step Python API, `contact_schematic.run()`.
 
 ### Inputs and data formats
 
@@ -26,6 +26,18 @@ CLI (`python -m labtoolbox.contact_schematic` or the unified `labtoolbox schemat
 
 The unified CLI (`labtoolbox schematic`) forwards `--input/--out/--label/--channel/--lam/--dpi/--no-render` only; it does **not** expose `--cell/--coccus` (use `python -m labtoolbox.contact_schematic` for those).
 
+The GUI tab **📐 Contact Schematic** exposes the AFM data folder, the sample label (default `515 nm`) and the output directory; it runs the same one-step API with the remaining defaults (ZSR channel, λ = 515 nm, dpi = 190, literature cell sizes, rendering on).
+
+Shared Python entry point (used by both CLI forms and the GUI):
+
+```python
+contact_schematic.run(folder, output_dir="output", label="515 nm", channel="zsr",
+                      lam_nm=515.0, dpi=190, cell=(2.0, 0.5), coccus=0.9,
+                      render=True, verbose=False)
+```
+
+It returns `{"csv", "summary", "figures", "readme", "n_files"}`; `render=False` is equivalent to the CLI `--no-render`, and `verbose=True` prints the CLI progress lines.
+
 Surface classification is **filename-based** (`geometry.classify`): lower-case path containing `lipss` → LIPSS; containing `np` (word boundary), `nano`, `nanopillar` or `pillar` → nanopillar; otherwise `unknown` (Sa/Sq/Sz are still measured, but no feature geometry is extracted and the file is excluded from the schematic summaries).
 
 ### Outputs
@@ -38,16 +50,19 @@ Surface classification is **filename-based** (`geometry.classify`): lower-case p
 | `geometry_measurements.csv` | Summary block (mean ± sd (n; min–max) for the four headline quantities) + per-file measured values for every file |
 | `README.md` | Auto-generated bilingual (Chinese) note: measured geometry, file list, and the five assumptions that must match the paper caption |
 
-Return value of `render_all` is the list of PNG paths actually generated.
+Return value of `render_all` is the list of PNG paths actually generated. The one-step `run()` returns `{"csv": path, "summary": dict, "figures": [png paths], "readme": path, "n_files": int}`.
 
 ### End-to-end pipeline
+
+All entry points — GUI tab, `python -m labtoolbox.contact_schematic`, `labtoolbox schematic` and the Python API — call `contact_schematic.run(folder, ...)`, which creates the output directory and executes the steps below; `__main__.py` is a thin argparse adapter over it.
 
 1. **Discover files** (`measure_geometry`): accept a file, a glob or a directory (recursive `.ibw`); every file is measured independently and failures are recorded as `{"class": "error", "error": ...}` without aborting the batch.
 2. **Measure one file** (`measure_file`): `load_heightmap(channel="zsr")` → `plane_subtract` → `despike_z` (5σ median despiking) → `surface_metrics` → `Sa`, `Sq`, `Sz`; then class-specific geometry (below).
 3. **Summarise** (`summarise`): for each class and quantity compute `n`, `mean`, `sd` (ddof=1), `median`, `min`, `max`; return the dictionary used by the renderer (`lam_nm`, `lipss`, `nanopillar`, `n_files`, `n_lipss`, `n_pillar`).
 4. **Write CSV** (`write_csv`): headline summary for `LIPSS.period_nm`, `LIPSS.depth_nm`, `Nanopillar.spacing_nm`, `Nanopillar.height_nm`, then a blank line and the per-file table.
 5. **Render** (`render_all`): `fig1` + `fig3` when LIPSS statistics exist; `fig2` when nanopillar statistics exist (each as PNG + PDF).
-6. **Write README** with the measured numbers and the fixed assumption list.
+6. **Write README** (`write_readme`) with the measured numbers and the fixed assumption list.
+7. **Return** the artefact dict `{csv, summary, figures, readme, n_files}`.
 
 #### Class-specific measurement
 
@@ -90,13 +105,25 @@ Return value of `render_all` is the list of PNG paths actually generated.
 | plane subtraction | always on | `plane_subtract` applied inside `measure_file` |
 | pillar peak filter | 7×7 max, `median+1.5σ` | `maximum_filter(size=7)` |
 | minimum peaks | 5 | below this, no pillar spacing is reported |
+| `run(folder)` | required | One-step API: `.ibw` file/dir → CSV (+ figures/README) |
+| `run(output_dir)` | `"output"` | Output directory |
+| `run(label)` | `"515 nm"` | Sample label in titles |
+| `run(channel)` | `"zsr"` | `.ibw` channel |
+| `run(lam_nm)` | `515.0` | FFT physical period window `(0.5λ, 1.5λ)` |
+| `run(dpi)` | `190` | Figure resolution |
+| `run(cell)` | `(2.0, 0.5)` µm | *E. coli* (length, diameter) |
+| `run(coccus)` | `0.9` µm | *S. aureus* diameter |
+| `run(render)` | `True` | `False` = CSV only (CLI `--no-render`) |
+| `run(verbose)` | `False` | Print CLI-style progress (CLI uses `True`, GUI stays silent) |
+
+The GUI exposes only `folder`, `output_dir` and `label`; the other `run()` parameters use their defaults.
 
 ### Implementation notes
 
-* Package `labtoolbox/contact_schematic/`: `geometry.py` (146 lines), `render.py` (436 lines), `__main__.py` (101 lines), `__init__.py` (exports `classify`, `measure_file`, `measure_geometry`, `summarise`, `write_csv`, `render_all`, `render_contact_geometry`, `render_surface_figure`, `ECOLI_L/D`, `SAUREUS_D`).
+* Package `labtoolbox/contact_schematic/`: `geometry.py` (146 lines), `render.py` (436 lines), `__init__.py` (117 lines — `README_TMPL`, `write_readme`, one-step `run`, re-exports), `__main__.py` (46 lines — thin argparse adapter over `run`). Exported names: `classify`, `measure_file`, `measure_geometry`, `summarise`, `write_csv`, `render_all`, `render_contact_geometry`, `render_surface_figure`, `run`, `write_readme`, `ECOLI_L/D`, `SAUREUS_D`.
 * Dependencies: NumPy, SciPy (`ndimage`, `cKDTree`), matplotlib (Agg); imports `load_heightmap`, `plane_subtract`, `despike_z`, `stripe_orientation`, `surface_metrics` from `surfmetrics` (identical ZSR preprocessing) and `_setup_cjk_font` for Chinese labels.
-* CLI entry points: `python -m labtoolbox.contact_schematic` and, in the unified CLI, `labtoolbox schematic` (which does not forward `--cell/--coccus`). There is **no GUI tab** for this module at commit `0e0508e`.
-* At commit `0e0508e` the package is present in the tree and importable but is **not listed in `pyproject.toml`'s `packages`**, so a pip-installed wheel of that commit would not contain it; run it from the source tree (or rely on the later packaging work).
+* Entry points: the GUI tab **📐 接触几何示意 / "Contact Schematic"** (AFM data folder, sample label, output dir), `python -m labtoolbox.contact_schematic` (all flags, including `--cell/--coccus`), the unified CLI `labtoolbox schematic` (forwards `--input/--out/--label/--channel/--lam/--dpi/--no-render`), and the Python API `contact_schematic.run(...)`. The GUI and both CLI forms delegate to the same `run()` wrapper.
+* The package is listed in `pyproject.toml`'s `packages` (since the integration PR), so `pip install` installations contain it, and the PyInstaller `[build]`/desktop app bundles it.
 * `write_csv` writes a UTF-8-BOM CSV with a `parameter,value_nm,note` summary header, four summary rows (formatted `mean ± sd (n; min–max)`), a blank row, then a fixed per-file header. There is a harmless dead statement `f.write("") if False else None` in the summary loop.
 * `render_all` writes both PNG and PDF for every figure; figures can be slow (dense `plot_surface` grids, ~20 in or larger canvases).
 
@@ -118,7 +145,7 @@ Return value of `render_all` is the list of PNG paths actually generated.
 * `geometry_measurements.csv` is the traceable record: every per-file measurement plus `n/mean/sd/median/min/max` per class; `period_banded` records whether the physical period window was used.
 * The generated `README.md` intentionally lists the five assumptions that "must match the paper caption" — the module treats figure captions as part of the QC contract.
 * Recommended checks: compare the measured `period_nm`/`depth_nm` with `surfmetrics` (3-D profile P-V) and `semtexture` (autocorrelation period) before publication; verify the classification keywords match the filenames; inspect the PDF (not just PNG) at full size because annotations are small.
-* Smoke-tested for this documentation (commit `0e0508e`, synthetic geometry dict, dpi = 80): `render_all` produced `fig1_LIPSS_adhesion.png`, `fig3_contact_geometry.png` and `fig2_nanopillar_adhesion.png` (all present, PNG + PDF) and `write_csv` produced the documented summary block and per-file table.
+* Smoke-tested for this documentation (base commit `0e0508e`, synthetic geometry dict, dpi = 80): `render_all` produced `fig1_LIPSS_adhesion.png`, `fig3_contact_geometry.png` and `fig2_nanopillar_adhesion.png` (all present, PNG + PDF) and `write_csv` produced the documented summary block and per-file table. The integration branch only wraps these unchanged functions in `run()` for the GUI/CLI, so the measurement/rendering behaviour documented here is unchanged.
 
 ### References
 
@@ -133,7 +160,7 @@ Return value of `render_all` is the list of PNG paths actually generated.
 
 ### 目的与科学背景
 
-`contact_schematic` 是 **AFM 分析流程的末端步骤**：从 Bruker `.ibw` 高度图测量与接触相关的真实几何（LIPSS 周期与沟深；纳米柱间距与凸起高度），再渲染细菌细胞搁置在该形貌上的出版级 3D 示意图与接触几何图。输出为图组（`fig1` LIPSS 黏附、`fig2` 纳米柱黏附、`fig3` 接触几何）、逐文件测量表，以及自动生成、写明全部假设的 README。它是*示意*模块：细胞是刚体几何形状，按实测形貌摆放——这里不做 XDLVO 或力学形变计算（那是 [`xdlvo`](xdlvo.md)）。
+`contact_schematic` 是 **AFM 分析流程的末端步骤**：从 Bruker `.ibw` 高度图测量与接触相关的真实几何（LIPSS 周期与沟深；纳米柱间距与凸起高度），再渲染细菌细胞搁置在该形貌上的出版级 3D 示意图与接触几何图。输出为图组（`fig1` LIPSS 黏附、`fig2` 纳米柱黏附、`fig3` 接触几何）、逐文件测量表，以及自动生成、写明全部假设的 README。它是*示意*模块：细胞是刚体几何形状，按实测形貌摆放——这里不做 XDLVO 或力学形变计算（那是 [`xdlvo`](xdlvo.md)）。模块可从 GUI（标签页 **📐 接触几何示意**）、统一 CLI（`labtoolbox schematic` / `python -m labtoolbox.contact_schematic`）以及一步式 Python API `contact_schematic.run()` 调用。
 
 ### 输入与数据格式
 
@@ -153,6 +180,18 @@ Return value of `render_all` is the list of PNG paths actually generated.
 
 统一 CLI（`labtoolbox schematic`）只转发 `--input/--out/--label/--channel/--lam/--dpi/--no-render`，**不暴露** `--cell/--coccus`（这两个要用 `python -m labtoolbox.contact_schematic`）。
 
+GUI 标签页 **📐 接触几何示意 / "Contact Schematic"** 暴露 AFM 数据目录、样品标签（默认 `515 nm`）与输出目录；它用其余默认值（ZSR 通道、λ = 515 nm、dpi = 190、文献细胞尺寸、渲染开启）运行同一个一步式 API。
+
+共享 Python 入口（两种 CLI 形式与 GUI 都调用）：
+
+```python
+contact_schematic.run(folder, output_dir="output", label="515 nm", channel="zsr",
+                      lam_nm=515.0, dpi=190, cell=(2.0, 0.5), coccus=0.9,
+                      render=True, verbose=False)
+```
+
+返回 `{"csv", "summary", "figures", "readme", "n_files"}`；`render=False` 等价于 CLI 的 `--no-render`，`verbose=True` 打印 CLI 式进度。
+
 表面分类是**基于文件名**的（`geometry.classify`）：小写路径含 `lipss` → LIPSS；含 `np`（词边界）、`nano`、`nanopillar` 或 `pillar` → 纳米柱；否则为 `unknown`（仍测量 Sa/Sq/Sz，但不提取特征几何，也不进入示意图汇总）。
 
 ### 输出
@@ -165,16 +204,19 @@ Return value of `render_all` is the list of PNG paths actually generated.
 | `geometry_measurements.csv` | 汇总区（四个主量的 mean ± sd (n; min–max)）+ 全部文件的逐文件测量值 |
 | `README.md` | 自动生成（中文）说明：实测几何、文件清单，以及必须与论文图注一致的 5 条假设 |
 
-`render_all` 的返回值是实际生成的 PNG 路径列表。
+`render_all` 的返回值是实际生成的 PNG 路径列表。一步式 `run()` 返回 `{"csv": path, "summary": dict, "figures": [png 路径], "readme": path, "n_files": int}`。
 
 ### 端到端流程
+
+所有入口——GUI 标签页、`python -m labtoolbox.contact_schematic`、`labtoolbox schematic` 与 Python API——都调用 `contact_schematic.run(folder, ...)`：它创建输出目录并执行下列步骤；`__main__.py` 只是其上的薄 argparse 适配层。
 
 1. **发现文件**（`measure_geometry`）：接受单个文件、glob 或目录（递归 `.ibw`）；每个文件独立测量，失败记为 `{"class": "error", "error": ...}` 而不中断整批。
 2. **测量单文件**（`measure_file`）：`load_heightmap(channel="zsr")` → `plane_subtract` → `despike_z`（5σ 中值去尖峰）→ `surface_metrics` → `Sa`、`Sq`、`Sz`；随后做分类专属几何（见下）。
 3. **汇总**（`summarise`）：对每个类别与量计算 `n`、`mean`、`sd`（ddof=1）、`median`、`min`、`max`；返回渲染器使用的字典（`lam_nm`、`lipss`、`nanopillar`、`n_files`、`n_lipss`、`n_pillar`）。
 4. **写 CSV**（`write_csv`）：先写 `LIPSS.period_nm`、`LIPSS.depth_nm`、`Nanopillar.spacing_nm`、`Nanopillar.height_nm` 的汇总行，再空行，最后逐文件表。
 5. **渲染**（`render_all`）：有 LIPSS 统计时出 `fig1` + `fig3`；有纳米柱统计时出 `fig2`（均 PNG + PDF）。
-6. **写 README**：实测数值 + 固定假设清单。
+6. **写 README**（`write_readme`）：实测数值 + 固定假设清单。
+7. **返回**产物 dict `{csv, summary, figures, readme, n_files}`。
 
 #### 分类专属测量
 
@@ -217,13 +259,25 @@ Return value of `render_all` is the list of PNG paths actually generated.
 | 平面扣除 | 始终开启 | `measure_file` 内调用 `plane_subtract` |
 | 柱峰过滤 | 7×7 极大、`median+1.5σ` | `maximum_filter(size=7)` |
 | 最少峰数 | 5 | 低于此值不报告柱间距 |
+| `run(folder)` | 必填 | 一步式 API：`.ibw` 文件/目录 → CSV（+ 图/README） |
+| `run(output_dir)` | `"output"` | 输出目录 |
+| `run(label)` | `"515 nm"` | 标题样品标签 |
+| `run(channel)` | `"zsr"` | `.ibw` 通道 |
+| `run(lam_nm)` | `515.0` | FFT 物理周期窗 `(0.5λ, 1.5λ)` |
+| `run(dpi)` | `190` | 图分辨率 |
+| `run(cell)` | `(2.0, 0.5)` µm | *E. coli*（长，直径） |
+| `run(coccus)` | `0.9` µm | *S. aureus* 直径 |
+| `run(render)` | `True` | `False` = 只出 CSV（CLI `--no-render`） |
+| `run(verbose)` | `False` | 打印 CLI 式进度（CLI 用 `True`，GUI 静默） |
+
+GUI 只暴露 `folder`、`output_dir`、`label`；其余 `run()` 参数使用默认值。
 
 ### 实现说明
 
-* 包 `labtoolbox/contact_schematic/`：`geometry.py`（146 行）、`render.py`（436 行）、`__main__.py`（101 行）、`__init__.py`（导出 `classify`、`measure_file`、`measure_geometry`、`summarise`、`write_csv`、`render_all`、`render_contact_geometry`、`render_surface_figure`、`ECOLI_L/D`、`SAUREUS_D`）。
+* 包 `labtoolbox/contact_schematic/`：`geometry.py`（146 行）、`render.py`（436 行）、`__init__.py`（117 行——`README_TMPL`、`write_readme`、一步式 `run` 与再导出）、`__main__.py`（46 行——`run` 上的薄 argparse 适配层）。导出名：`classify`、`measure_file`、`measure_geometry`、`summarise`、`write_csv`、`render_all`、`render_contact_geometry`、`render_surface_figure`、`run`、`write_readme`、`ECOLI_L/D`、`SAUREUS_D`。
 * 依赖：NumPy、SciPy（`ndimage`、`cKDTree`）、matplotlib（Agg）；从 `surfmetrics` 导入 `load_heightmap`、`plane_subtract`、`despike_z`、`stripe_orientation`、`surface_metrics`（同一套 ZSR 预处理），并导入 `_setup_cjk_font` 显示中文。
-* CLI 入口：`python -m labtoolbox.contact_schematic`，以及统一 CLI 的 `labtoolbox schematic`（不转发 `--cell/--coccus`）。commit `0e0508e` 时该模块**没有 GUI 标签页**。
-* commit `0e0508e` 时该包在源码树中可导入，但**未列入 `pyproject.toml` 的 `packages`**，因此该 commit 的 pip wheel 不会包含它；请从源码树运行（或依赖后续打包工作）。
+* 入口：GUI 标签页 **📐 接触几何示意 / "Contact Schematic"**（AFM 数据目录、样品标签、输出目录），`python -m labtoolbox.contact_schematic`（全部参数，含 `--cell/--coccus`），统一 CLI `labtoolbox schematic`（转发 `--input/--out/--label/--channel/--lam/--dpi/--no-render`），以及 Python API `contact_schematic.run(...)`。GUI 与两种 CLI 形式都委托给同一个 `run()` 包装。
+* 该包自集成分支起列入 `pyproject.toml` 的 `packages`，因此 `pip install` 安装会包含它，PyInstaller `[build]`/桌面应用也会打包它。
 * `write_csv` 写 UTF-8-BOM CSV：`parameter,value_nm,note` 汇总表头，四行汇总（格式 `mean ± sd (n; min–max)`），空行，再逐文件固定表头。汇总循环里有一句无害的死代码 `f.write("") if False else None`。
 * `render_all` 每张图同时写 PNG 与 PDF；图可能较慢（密集 `plot_surface` 网格、约 20 英寸或更大的画布）。
 
@@ -245,7 +299,7 @@ Return value of `render_all` is the list of PNG paths actually generated.
 * `geometry_measurements.csv` 是可追溯记录：逐文件测量值 + 每类的 `n/mean/sd/median/min/max`；`period_banded` 记录是否用了物理周期窗。
 * 生成的 `README.md` 刻意列出“必须与论文图注一致”的 5 条假设——模块把图注视为 QC 契约的一部分。
 * 建议检查：发表前把实测 `period_nm`/`depth_nm` 与 `surfmetrics`（3D 剖面 P-V）及 `semtexture`（自相关周期）对比；确认分类关键词与文件名匹配；按原始尺寸查看 PDF（而不只是 PNG），因为标注较小。
-* 本文档冒烟测试（commit `0e0508e`，合成几何 dict，dpi = 80）：`render_all` 生成 `fig1_LIPSS_adhesion.png`、`fig3_contact_geometry.png` 与 `fig2_nanopillar_adhesion.png`（均存在，PNG + PDF），`write_csv` 生成文档所述的汇总区与逐文件表。
+* 本文档冒烟测试（基线 commit `0e0508e`，合成几何 dict，dpi = 80）：`render_all` 生成 `fig1_LIPSS_adhesion.png`、`fig3_contact_geometry.png` 与 `fig2_nanopillar_adhesion.png`（均存在，PNG + PDF），`write_csv` 生成文档所述的汇总区与逐文件表。集成分支只是把这些未改动的函数包进 `run()` 供 GUI/CLI 使用，因此这里记录的测量/渲染行为不变。
 
 ### 参考文献
 

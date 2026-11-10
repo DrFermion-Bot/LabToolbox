@@ -145,9 +145,9 @@ CLI `labtoolbox surfmetrics --file … | --folder … [--channel …] [--px …]
 
 ### Implementation notes
 
-* Package `labtoolbox/surfmetrics/surfmetrics.py` (874 lines). Dependencies: NumPy, SciPy, matplotlib (Agg), `tifffile`; `igor` from `https://github.com/wking/igor` for `.ibw`; optional WSL + Gwyddion for the Gwyddion backend.
+* Package `labtoolbox/surfmetrics/surfmetrics.py` (872 lines). Dependencies: NumPy, SciPy, matplotlib (Agg), `tifffile`; `igor` from `https://github.com/wking/igor` for `.ibw`; optional WSL + Gwyddion for the Gwyddion backend.
 * Functions: `load_heightmap`, `surface_metrics`, `_setup_cjk_font`, `_apply_z_ticks`, `_cbar`, `_z_scale_bar`, `plot3d`, `_norm_dir`, `stripe_orientation`, `_sample_line`, `plot_profiles`, `profile_lines_for`, `plot_grid`, `_win2wsl`, `gwy_batch_wsl`, `_profile_cells`, `channel_names`, `resolve_channel`, `plane_subtract`, `despike_z`, `run`.
-* `_setup_cjk_font` selects the first available of Microsoft YaHei / SimHei / Noto Sans CJK SC / Source Han Sans SC; figure text otherwise uses DejaVu Sans.
+* Figure fonts are resolved by `labtoolbox.common.fonts` (`setup_matplotlib_cjk`, wrapped by the module's cached `_setup_cjk_font`): Windows Microsoft YaHei/SimHei, macOS PingFang/Hiragino, Linux Noto/WenQuanYi, with `LABTOOLBOX_CJK_FONT` as an override; figure text otherwise falls back to DejaVu Sans.
 * Figure titles and CSV headers are English; warnings (channel choice, unit conversion) are printed to stdout in Chinese.
 * The unified CLI registers `surfmetrics` in `labtoolbox/cli.py`; `labtoolbox/surfmetrics/__init__` exports `load_heightmap`, `surface_metrics`, `plot3d`, `plot_grid`, `run`. `contact_schematic/geometry.py` imports `despike_z`, `load_heightmap`, `plane_subtract`, `stripe_orientation`, `surface_metrics` from this module.
 
@@ -326,9 +326,9 @@ Python 侧逐文件构造 WSL 命令（`_win2wsl` 把 `F:\x` → `/mnt/f/x`）�
 
 ### 实现说明
 
-* 包 `labtoolbox/surfmetrics/surfmetrics.py`（874 行）。依赖 NumPy、SciPy、matplotlib（Agg）、`tifffile`；`.ibw` 需要来自 `https://github.com/wking/igor` 的 `igor`；Gwyddion 后端另需 WSL + Gwyddion。
+* 包 `labtoolbox/surfmetrics/surfmetrics.py`（872 行）。依赖 NumPy、SciPy、matplotlib（Agg）、`tifffile`；`.ibw` 需要来自 `https://github.com/wking/igor` 的 `igor`；Gwyddion 后端另需 WSL + Gwyddion。
 * 函数：`load_heightmap`、`surface_metrics`、`_setup_cjk_font`、`_apply_z_ticks`、`_cbar`、`_z_scale_bar`、`plot3d`、`_norm_dir`、`stripe_orientation`、`_sample_line`、`plot_profiles`、`profile_lines_for`、`plot_grid`、`_win2wsl`、`gwy_batch_wsl`、`_profile_cells`、`channel_names`、`resolve_channel`、`plane_subtract`、`despike_z`、`run`。
-* `_setup_cjk_font` 依次选择 Microsoft YaHei / SimHei / Noto Sans CJK SC / Source Han Sans SC 中第一个可用字体；否则用 DejaVu Sans。
+* 图字体由 `labtoolbox.common.fonts` 解析（模块内的 `_setup_cjk_font` 只是其带缓存的包装）：Windows 微软雅黑/SimHei、macOS PingFang/Hiragino、Linux Noto/WenQuanYi，可用 `LABTOOLBOX_CJK_FONT` 覆盖；都不可用时回退 DejaVu Sans。
 * 图标题与 CSV 表头为英文；通道选择、单位换算等警告以中文打印到 stdout。
 * 统一 CLI 在 `labtoolbox/cli.py` 注册 `surfmetrics`；`labtoolbox/surfmetrics/__init__` 导出 `load_heightmap`、`surface_metrics`、`plot3d`、`plot_grid`、`run`。`contact_schematic/geometry.py` 从本模块导入 `despike_z`、`load_heightmap`、`plane_subtract`、`stripe_orientation`、`surface_metrics`。
 

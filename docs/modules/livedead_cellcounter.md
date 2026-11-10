@@ -6,11 +6,11 @@
 
 ### Purpose and scientific context
 
-This module automates counting of LIVE/DEAD fluorescence micrographs organised in a **replicate → time point → area** folder hierarchy and turns the counts into viability statistics. Each field is imaged in two channels: green (`g`, SYTO 9 → live, membrane-intact cells) and red (`r`, propidium iodide → dead, membrane-damaged cells); the module pairs the two files of the same field and reports live/dead counts, pooled viability, a stacked bar chart and a two-way ANOVA. It replaces manual ImageJ clicking and is the image-side front end of the [`livedead`](livedead.md) statistics module.
+This module automates counting of LIVE/DEAD fluorescence micrographs organised in a **replicate → time point → area** folder hierarchy and turns the counts into viability statistics. Each field is imaged in two channels: green (`g`, SYTO 9 → live, membrane-intact cells) and red (`r`, propidium iodide → dead, membrane-damaged cells); the module pairs the two files of the same field and reports live/dead counts, pooled viability, a stacked bar chart and a two-way ANOVA. It replaces manual ImageJ clicking and is the image-side front end of the [`livedead`](livedead.md) statistics module. It is available from the GUI (tab **🔬 LIVE/DEAD Cell Count**), the unified CLI (`labtoolbox livedead-cellcounter`) and the Python API.
 
 Two counting engines exist:
 
-* **`ImageJ` (default, reference methodology)** — classic ImageJ 1.54 headless batch with a project macro: adaptive threshold = histogram-mode background + 40, optional brightest-channel fallback, `Analyze Particles` size filter. Installed ImageJ is required.
+* **`ImageJ` (default, reference methodology)** — classic ImageJ 1.54 headless batch with a project macro: adaptive threshold = histogram-mode background + 40, optional brightest-channel fallback, `Analyze Particles` size filter. The packaged desktop app bundles ImageJ 1.54 + a native Temurin 11 JRE (nothing to install); a source checkout discovers a local ImageJ automatically (see *Bundled vs source-checkout ImageJ* below).
 * **`opencv` (legacy, troubleshooting only)** — the original Python/OpenCV fixed-threshold + watershed engine, kept for regression comparison. The project has standardised methodology on the ImageJ engine (README, 2026-09-11) and no longer runs dual-engine cross-validation.
 
 ### Input folder structure and filenames
@@ -34,6 +34,21 @@ Two counting engines exist:
 * Bundled demo: `examples/livedead_counter_demo/` (3 repeats × 1h/3h × Control/Area1 × 2 fields, synthetic 200×200 images) with `examples/README_livedead_counter.md`.
 * `skip_repeats=("repeat2",)` removes whole replicate folders before counting (for incomplete/invalid repeats).
 
+### Entry points
+
+| Entry point | How it is used |
+|---|---|
+| GUI tab **🔬 LIVE/DEAD Cell Count** | Image root folder, counting-engine selector (`imagej` / `opencv`) with an ImageJ status line, minimum particle size, output directory; the roundness/green/red entries are sent **only** when `opencv` is selected |
+| CLI `labtoolbox livedead-cellcounter FOLDER` | `--output`, `--backend imagej\|opencv`, `--min-size`, `--area-um2`, `--skip-repeats`, `--qc-dir` |
+| Python API | `labtoolbox.livedead_cellcounter.run(folder, output_dir, area_um2, backend, skip_repeats, **engine_kwargs)`; `LiveDeadCellCounter(engine=...).report(...)` for finer control |
+
+```bash
+labtoolbox livedead-cellcounter path/to/root --output results \
+    --backend imagej --min-size 3 --qc-dir results/qc
+```
+
+Option notes: `--min-size` falls back to the engine default when omitted (ImageJ 3 px², OpenCV 10 px); `--qc-dir` is honoured only by the ImageJ engine (the CLI prints a warning and ignores it for `opencv`); `--area-um2` is accepted but still unused (see limitations); errors surface through the unified CLI as a non-zero exit with a message. The GUI status line shows the discovered ImageJ directory or *“not found (set LABTOOLBOX_IMAGEJ_DIR)”*.
+
 ### Outputs
 
 `LiveDeadCellCounter.report(root, output_dir="output", verbose=True, skip_repeats=())` writes:
@@ -49,6 +64,7 @@ Two counting engines exist:
 
 ### End-to-end pipeline
 
+0. **Select the engine** — `backend="imagej"` (default) builds an `ImageJEngine`; `backend="opencv"` builds the legacy `CellCounterEngine`. `run()` filters the engine kwargs: only `imagej_dir`, `min_size`, `max_size`, `bg_offset`, `qc_dir` reach `ImageJEngine`; the OpenCV engine accepts its full parameter set. If the ImageJ runtime or macro cannot be found, the ImageJ engine raises `FileNotFoundError` listing the candidates — there is **no automatic fallback**; pass `backend="opencv"` explicitly.
 1. `scan_structure(root)` — list `repeat*` folders (numeric sort), time folders matching `\d+h$`, matching image files; warn if fewer than 3 repeats; apply `skip_repeats`; raise if nothing is found.
 2. `count_all(structure)` — for each repeat/time: group images by `(area, number)`, call `engine.count_live_dead(g_img)` → `live = counts["green"]` and `engine.count_live_dead(r_img)` → `dead = counts["red"]`; accumulate rows (failures become NaN + `error`), print progress every 20 pairs; compute `dead_rate = dead/total`.
 3. `summarize(df)` — relabel `c → Control`, `n → Area n`; aggregate mean/SD per area×time and add the **pooled** `Σlive/Σtotal × 100` viability.
@@ -77,7 +93,29 @@ Per image the macro:
 5. Optional QC mode (`qc_dir`): saves `<stem>_qc.png` with every counted particle circled in blue/magenta and numbered, for troubleshooting under-/over-counting.
 6. Back in Python, the per-file count is assigned to `green` or `red` from the filename (`[-_]?([rg])[_-]?\d+`); `count_live_dead_pair(g_img, r_img)` is available for explicit pairing when names are ambiguous.
 
-`ImageJEngine` requires an ImageJ installation with `ij.jar` and `jre/bin/java.exe`; it probes `E:/ImageJ/ImageJ`, `F:/ImageJ/ImageJ`, `C:/Users/PC/Downloads/ImageJ` in that order (`find_imagej_dir()`). The macro is looked up at `<ImageJ>/macros/count_livedead.ijm`; if absent, the repository copy `scripts/imagej/count_livedead.ijm` is copied there automatically (or read in place if the copy fails).
+#### Bundled vs source-checkout ImageJ
+
+`ImageJEngine` locates its runtime in this order (`imagej_dir_candidates()`, `find_imagej()`, `find_macro()`):
+
+1. **Environment override** `LABTOOLBOX_IMAGEJ_DIR` — may point at an ImageJ folder containing `ij.jar`, or at a bundle root containing `imagej/` and `scripts/`.
+2. **Packaged bundle roots** (only when frozen): `<bundle>/imagej`, where `<bundle>` is `sys._MEIPASS` (PyInstaller 6 Windows onedir `_internal`; macOS `.app` `Contents/Frameworks`), the executable directory / its `_internal`, and the `.app` `Contents/Resources|Frameworks` variants.
+3. **Repository bundle**: `<repo>/imagej`, `<repo>/vendor/imagej`.
+4. **Legacy local installs**: `E:/ImageJ/ImageJ`, `F:/ImageJ/ImageJ`, `C:/Users/PC/Downloads/ImageJ`.
+
+Java is taken from the ImageJ folder when present — Windows: `jre/bin/java.exe`, `jre/bin/java`, `jre/Contents/Home/bin/java`, `bin/java.exe`, `bin/java`; macOS: `jre/Contents/Home/bin/java` first, then the other layouts. The `java` on `PATH` is a development fallback only (a packaged build always carries its own JRE).
+
+The macro is **read-only referenced, never copied** (packaged apps live in read-only locations such as `Program Files` or a mounted `.app`): search order is the `LABTOOLBOX_IMAGEJ_DIR` variants (`macros/`, `imagej/macros/`, `scripts/imagej/`), then the bundle `scripts/imagej/count_livedead.ijm` and `imagej/macros/`, then the repository `scripts/imagej/` (and `imagej/macros`, `vendor/imagej/macros`), then `<ImageJ>/macros/`. `imagej_status()` returns `{dir, jar, java, macro, found, searched}` and drives the GUI status line.
+
+#### Bundled ImageJ 1.54 + Temurin 11 JRE (packaged app)
+
+The Windows installer/portable zip and the macOS DMGs embed ImageJ 1.54 (unmodified `ij.jar`, from `wsr.imagej.net`) and a **platform-native Eclipse Temurin 11 JRE**, assembled by `scripts/fetch_imagej.py` and bundled by `labtoolbox.spec`:
+
+| Platform | Bundled paths (read-only) |
+|---|---|
+| Windows | `…\LabToolbox\_internal\imagej\ij.jar`, `…\_internal\imagej\jre\bin\java.exe` |
+| macOS | `LabToolbox.app/Contents/Frameworks/imagej/ij.jar`, `…/imagej/jre/Contents/Home/bin/java` |
+
+The counting macro is bundled read-only at `…/scripts/imagej/count_livedead.ijm` (never copied at run time). No system Java/ImageJ/Fiji/Python is required and nothing is downloaded at first use; ImageJ 1.54 `Analyze Particles` was verified to give the same counts on the bundled Java 11 as on Java 8. Advanced users can override the bundled installation with `LABTOOLBOX_IMAGEJ_DIR`. Release CI checks the bundle with `scripts/verify_bundle.py` (ij.jar, JRE architecture, macro, igor). Install/unsigned-build details: [docs/INSTALL.md](../INSTALL.md).
 
 #### OpenCV engine (legacy): fixed threshold + watershed
 
@@ -128,14 +166,17 @@ If statsmodels fails, the fallback runs a one-way ANOVA across areas **at each t
 | `CellCounterEngine` | `split_thresh` | `0.1` | watershed foreground fraction of max distance |
 | `LiveDeadCellCounter` | `area_um2` | `None` | unused |
 
+CLI options map 1:1 onto `run()`'s parameters (`--min-size` → `min_size`, `--skip-repeats` → `skip_repeats`, `--qc-dir` → `qc_dir`, `--area-um2` → `area_um2`); `--min-size` defaults to the engine default when omitted. The GUI exposes backend + ImageJ status + minimum size + output folder, plus roundness/thresholds for the OpenCV engine only.
+
 ### Implementation notes
 
-* Package `labtoolbox/livedead_cellcounter/cellcounter.py` (581 lines); dependencies NumPy, pandas, matplotlib (Agg); ImageJ backend additionally uses only the Java subprocess + `csv`; OpenCV backend needs `opencv-python`.
-* Classes/functions: `find_imagej_dir`, `ImageJEngine` (`_macro_path`, `_batch_dir`, `count_live_dead`, `count_live_dead_pair`), `CellCounterEngine` (`extract_channel`, `count_cells_in_channel`, `count_live_dead`), `parse_filename`, `LiveDeadCellCounter` (`scan_structure`, `count_all`, `summarize`, `anova`, `plot`, `report`), `run`.
-* At commit `0e0508e` the module is **not registered in the unified CLI** (`labtoolbox/cli.py` has no cell-counter subcommand) and pyproject's package list does not include it; the supported entry points are the Python API and the GUI tab **🔬 LIVE/DEAD 细胞计数**.
+* Package `labtoolbox/livedead_cellcounter/cellcounter.py` (727 lines after the integration PR); dependencies NumPy, pandas, matplotlib (Agg); ImageJ backend additionally uses only the Java subprocess + `csv`; OpenCV backend needs `opencv-python`.
+* Classes/functions: `_dedupe`, `_bundle_roots`, `imagej_dir_candidates`, `find_imagej_jar`, `find_java`, `find_imagej`, `find_imagej_dir`, `_macro_candidates`, `find_macro`, `imagej_status`, `ImageJEngine` (`_macro_path`, `_batch_dir`, `count_live_dead`, `count_live_dead_pair`), `CellCounterEngine` (`extract_channel`, `count_cells_in_channel`, `count_live_dead`), `parse_filename`, `LiveDeadCellCounter` (`scan_structure`, `count_all`, `summarize`, `anova`, `plot`, `report`), `run`.
+* Registered in the unified CLI as **`livedead-cellcounter`** (integration PR) and listed in `pyproject.toml`'s `packages`; the `[build]` extra/desktop app bundles it. Entry points: GUI tab, CLI, Python API.
 * `run()` forwards `**engine_kwargs` to the selected engine; `verbose` is **not** an accepted argument of `run()` (passing it raises `TypeError`), only of `report()`.
 * The macro file must stay pure ASCII (ImageJ does not read macro files as UTF-8); its header documents the 5-line argument protocol.
-* A Chinese font is registered on import from `C:\Windows\Fonts\msyh.ttc`/`simhei.ttf` when present. The figure title/labels are hard-coded English.
+* Figure fonts are resolved by `labtoolbox.common.fonts` (`setup_matplotlib_cjk()`, called on import): Windows Microsoft YaHei/SimHei, macOS PingFang/Hiragino, Linux Noto/WenQuanYi; the `LABTOOLBOX_CJK_FONT` environment variable overrides the family. The figure title/labels are hard-coded English.
+* The discovery helpers are plain functions (no state); `imagej_status()` is also called by the GUI. The bundled ImageJ/JRE layout is documented in `docs/INSTALL.md` and asserted by `scripts/verify_bundle.py` in release CI.
 
 ### Assumptions, limitations and known quirks
 
@@ -145,8 +186,9 @@ If statsmodels fails, the fallback runs a one-way ANOVA across areas **at each t
 * **The bar-chart ANOVA annotation usually does not appear.** The plotting code looks for an `"p"` column, but the statsmodels branch returns `factor/sum_sq/df/F/PR(>F)`; only the fallback branch has `p`. Consequently the annotation is effectively limited to the fallback path (`aov["p"].iloc[0]` is then the first time point's p-value).
 * **Time ordering is lexicographic.** Times are sorted as strings (`"10h"` sorts before `"2h"`); rename to zero-padded labels if order matters.
 * **ANOVA is on log10(live+1) counts**, not viability; `log10=True` is the default, Type II SS, unbalanced cells are not modelled explicitly, no post-hoc tests, no multiplicity correction, no random effect for repeat.
-* **GUI parameters are partly inert.** The GUI passes `min_roundness`, `green_thresh`, `red_thresh`; in the default ImageJ mode these keys are filtered out by `run()` and silently ignored (only `min_size`/`max_size`/`bg_offset`/`qc_dir`/`imagej_dir` reach the ImageJ engine). The tooltip in the GUI states this.
-* **`area_um2` is dead code**; no area-normalised density is computed.
+* **GUI parameter routing (fixed in the integration PR).** The GUI now sends `min_roundness`/`green_thresh`/`red_thresh` **only** when `backend="opencv"` is selected; previously they were passed in ImageJ mode as well and silently dropped by `run()`'s kwarg filter. In ImageJ mode only `min_size` (and optionally `qc_dir` via the API/CLI) is adjustable.
+* **No automatic engine fallback.** If the ImageJ installation, JRE or macro cannot be found, the ImageJ engine raises `FileNotFoundError` listing the searched candidates instead of silently switching engines; pass `--backend opencv` explicitly to use the legacy engine. The GUI shows the discovery status before you run.
+* **`area_um2` is dead code**; no area-normalised density is computed. It is still exposed by the API and by the CLI `--area-um2` option (help text says “interface density conversion”), so it currently does nothing.
 * **Channel-trap heuristic** (brightest channel when named channel is dim) is a pragmatic fix, not a physical measurement; review QC overlays when counts look surprising.
 * `skip_repeats` matches folder names exactly (case-sensitive); pass the names as they appear on disk.
 * **OpenCV backend is retained only for regression/troubleshooting.** Its fixed thresholds and watershed parameters were superseded by the ImageJ method (project decision, 2026-09-11); historical comparison on the 515 nm series (160 paired fields) attributed most ImageJ-vs-OpenCV differences to the old engine lacking the channel-trap correction.
@@ -156,6 +198,7 @@ If statsmodels fails, the fallback runs a one-way ANOVA across areas **at each t
 * Optional per-image QC overlays (`qc_dir` → `<stem>_qc.png`) show each counted particle with number, the channel actually used and the threshold; this is the primary visual QC.
 * Raw CSV keeps `g_image`, `r_image` and per-pair errors, so every count is traceable to a file.
 * Cross-engine historical comparison is reproducible with `scripts/compare_count_backends.py` (outputs not committed); the project has standardised on ImageJ, so the OpenCV engine is not a validation oracle.
+* Release CI verifies the packaged engine with `scripts/verify_bundle.py` (bundled `imagej/ij.jar`, platform-native JRE architecture, bundled macro, igor), so a broken/missing bundle fails the build instead of failing at the user's bench.
 * Verified demo run for this documentation (commit `0e0508e`, Python 3.11, OpenCV 4.13, `backend="opencv"`): `examples/livedead_counter_demo` → 24 pairs; e.g. repeat1/1h/Area1: live 13, dead 12; pooled summary Area1 1h = 48.2 % viability (n = 6 pairs); ANOVA table as described (Type II, log10 live counts). The ImageJ backend could not be executed on the documentation machine (no ImageJ installation available); its behaviour is documented from the macro source.
 
 ### References
@@ -172,11 +215,11 @@ If statsmodels fails, the fallback runs a one-way ANOVA across areas **at each t
 
 ### 目的与科学背景
 
-本模块自动计数按 **重复 → 时间点 → 区域** 文件夹层级组织的 LIVE/DEAD 荧光显微图，并把计数转成存活率统计。每个视野成对拍摄两个通道：绿色（`g`，SYTO 9 → 活菌、膜完整）与红色（`r`，碘化丙啶 → 死菌、膜受损）；模块把同一视野的两张图配对，输出活/死计数、合并存活率、堆叠柱状图与双因素 ANOVA。它替代手工 ImageJ 点选，是 [`livedead`](livedead.md) 统计模块的图像侧前端。
+本模块自动计数按 **重复 → 时间点 → 区域** 文件夹层级组织的 LIVE/DEAD 荧光显微图，并把计数转成存活率统计。每个视野成对拍摄两个通道：绿色（`g`，SYTO 9 → 活菌、膜完整）与红色（`r`，碘化丙啶 → 死菌、膜受损）；模块把同一视野的两张图配对，输出活/死计数、合并存活率、堆叠柱状图与双因素 ANOVA。它替代手工 ImageJ 点选，是 [`livedead`](livedead.md) 统计模块的图像侧前端。可用入口：GUI 标签页 **🔬 LIVE/DEAD 细胞计数**、统一 CLI（`labtoolbox livedead-cellcounter`）与 Python API。
 
 存在两个计数引擎：
 
-* **`ImageJ`（默认，方法学基准）**——经典 ImageJ 1.54 headless 批处理 + 项目宏：自适应阈值 = 直方图众数背景 + 40，可选最亮通道回退，`Analyze Particles` 面积过滤。需要已安装 ImageJ。
+* **`ImageJ`（默认，方法学基准）**——经典 ImageJ 1.54 headless 批处理 + 项目宏：自适应阈值 = 直方图众数背景 + 40，可选最亮通道回退，`Analyze Particles` 面积过滤。打包桌面版内置 ImageJ 1.54 + 平台原生 Temurin 11 JRE（无需安装）；源码运行时自动探测本地 ImageJ（见下文 *内置 vs 源码运行时的 ImageJ*）。
 * **`opencv`（旧引擎，仅排障）**——最初的 Python/OpenCV 固定阈值 + 分水岭引擎，保留用于回归对比。项目已于 2026-09-11 把方法学统一到 ImageJ 引擎（见 README），不再做双引擎交叉验证。
 
 ### 输入文件夹结构与文件名
@@ -200,6 +243,21 @@ If statsmodels fails, the fallback runs a one-way ANOVA across areas **at each t
 * 自带演示：`examples/livedead_counter_demo/`（3 重复 × 1h/3h × Control/Area1 × 2 视野，合成 200×200 图像）及说明 `examples/README_livedead_counter.md`。
 * `skip_repeats=("repeat2",)` 在计数前整组剔除重复文件夹（用于数据不全/无效的重复）。
 
+### 入口
+
+| 入口 | 用法 |
+|---|---|
+| GUI 标签页 **🔬 LIVE/DEAD 细胞计数** | 图像根文件夹、计数引擎选择（`imagej` / `opencv`，带 ImageJ 状态行）、最小粒子面积、输出目录；圆形度/绿/红阈值**只在**选 `opencv` 时发送 |
+| CLI `labtoolbox livedead-cellcounter FOLDER` | `--output`、`--backend imagej\|opencv`、`--min-size`、`--area-um2`、`--skip-repeats`、`--qc-dir` |
+| Python API | `labtoolbox.livedead_cellcounter.run(folder, output_dir, area_um2, backend, skip_repeats, **engine_kwargs)`；更细控制可用 `LiveDeadCellCounter(engine=...).report(...)` |
+
+```bash
+labtoolbox livedead-cellcounter path/to/root --output results \
+    --backend imagej --min-size 3 --qc-dir results/qc
+```
+
+选项说明：省略 `--min-size` 时用引擎默认值（ImageJ 3 px²、OpenCV 10 px）；`--qc-dir` 只对 ImageJ 引擎有效（CLI 对 `opencv` 会打印警告并忽略）；`--area-um2` 被接受但仍未使用（见局限）；错误经统一 CLI 以非零退出码和报错信息暴露。GUI 状态行显示探测到的 ImageJ 目录，或 *“未找到 (可设 LABTOOLBOX_IMAGEJ_DIR)”*。
+
 ### 输出
 
 `LiveDeadCellCounter.report(root, output_dir="output", verbose=True, skip_repeats=())` 写出：
@@ -215,6 +273,7 @@ If statsmodels fails, the fallback runs a one-way ANOVA across areas **at each t
 
 ### 端到端流程
 
+0. **选择引擎**——`backend="imagej"`（默认）构造 `ImageJEngine`；`backend="opencv"` 构造旧的 `CellCounterEngine`。`run()` 会过滤引擎参数：只有 `imagej_dir`、`min_size`、`max_size`、`bg_offset`、`qc_dir` 会传给 `ImageJEngine`；OpenCV 引擎接受其完整参数集。找不到 ImageJ 运行时或宏时，ImageJ 引擎会抛 `FileNotFoundError` 并列出搜索候选——**不会自动回退**；请显式传 `backend="opencv"`。
 1. `scan_structure(root)`——列出 `repeat*` 文件夹（按数字排序）、匹配 `\d+h$` 的时间文件夹与匹配的图像文件；重复数少于 3 时告警；应用 `skip_repeats`；什么都没找到时抛错。
 2. `count_all(structure)`——对每个重复/时间：按 `(区域, 编号)` 分组图像，调 `engine.count_live_dead(g_img)` → `live = counts["green"]`，`engine.count_live_dead(r_img)` → `dead = counts["red"]`；累积行（失败行记 NaN + `error`），每 20 对打印进度；算 `dead_rate = dead/total`。
 3. `summarize(df)`——把 `c → Control`、`n → Area n` 重命名；按区域×时间聚合均值/SD，并加入**合并计数**的 `Σlive/Σtotal × 100` 存活率。
@@ -243,7 +302,29 @@ java -cp <ImageJ>/ij.jar ij.ImageJ -batch <宏> <参数文件>
 5. 可选 QC 模式（`qc_dir`）：保存 `<stem>_qc.png`，把每个被计数粒子圈出并编号，便于排查漏数/多圈。
 6. 回到 Python 后，按文件名（`[-_]?([rg])[_-]?\d+`）把逐文件计数分派为 `green` 或 `red`；文件名有歧义时可用 `count_live_dead_pair(g_img, r_img)` 显式配对。
 
-`ImageJEngine` 需要含 `ij.jar` 与 `jre/bin/java.exe` 的 ImageJ 安装；依次探测 `E:/ImageJ/ImageJ`、`F:/ImageJ/ImageJ`、`C:/Users/PC/Downloads/ImageJ`（`find_imagej_dir()`）。宏文件先找 `<ImageJ>/macros/count_livedead.ijm`；缺失时自动把仓库副本 `scripts/imagej/count_livedead.ijm` 拷过去（拷贝失败则直接从仓库位置读取）。
+#### 内置 vs 源码运行时的 ImageJ
+
+`ImageJEngine` 按以下顺序定位运行时（`imagej_dir_candidates()`、`find_imagej()`、`find_macro()`）：
+
+1. **环境变量覆盖** `LABTOOLBOX_IMAGEJ_DIR`——可指向含 `ij.jar` 的 ImageJ 目录，或指向含 `imagej/` 与 `scripts/` 的 bundle 根。
+2. **打包 bundle 根**（仅冻结版）：`<bundle>/imagej`，其中 `<bundle>` 为 `sys._MEIPASS`（PyInstaller 6 Windows onedir 的 `_internal`；macOS `.app` 的 `Contents/Frameworks`）、可执行文件目录及其 `_internal`、`.app` 的 `Contents/Resources|Frameworks` 变体。
+3. **仓库随包**：`<repo>/imagej`、`<repo>/vendor/imagej`。
+4. **旧本地安装**：`E:/ImageJ/ImageJ`、`F:/ImageJ/ImageJ`、`C:/Users/PC/Downloads/ImageJ`。
+
+Java 优先取自 ImageJ 目录——Windows：`jre/bin/java.exe`、`jre/bin/java`、`jre/Contents/Home/bin/java`、`bin/java.exe`、`bin/java`；macOS：先 `jre/Contents/Home/bin/java`，再其他布局。`PATH` 里的 `java` 只是开发回退（打包版总是自带 JRE）。
+
+宏文件**只读引用、从不复制**（打包版位于 `Program Files` 或挂载的 `.app` 等只读位置）：搜索顺序为 `LABTOOLBOX_IMAGEJ_DIR` 变体（`macros/`、`imagej/macros/`、`scripts/imagej/`）→ bundle 的 `scripts/imagej/count_livedead.ijm` 与 `imagej/macros/` → 仓库 `scripts/imagej/`（及 `imagej/macros`、`vendor/imagej/macros`）→ `<ImageJ>/macros/`。`imagej_status()` 返回 `{dir, jar, java, macro, found, searched}`，并驱动 GUI 状态行。
+
+#### 内置 ImageJ 1.54 + Temurin 11 JRE（打包应用）
+
+Windows 安装包/便携 zip 与 macOS DMG 内置 ImageJ 1.54（未修改的 `ij.jar`，来自 `wsr.imagej.net`）与**平台原生 Eclipse Temurin 11 JRE**，由 `scripts/fetch_imagej.py` 组装、`labtoolbox.spec` 打包：
+
+| 平台 | 内置路径（只读） |
+|---|---|
+| Windows | `…\LabToolbox\_internal\imagej\ij.jar`、`…\_internal\imagej\jre\bin\java.exe` |
+| macOS | `LabToolbox.app/Contents/Frameworks/imagej/ij.jar`、`…/imagej/jre/Contents/Home/bin/java` |
+
+计数宏以只读方式随包分发于 `…/scripts/imagej/count_livedead.ijm`（运行时从不复制）。无需系统 Java/ImageJ/Fiji/Python，首次使用不联网下载；已验证 ImageJ 1.54 的 `Analyze Particles` 在内置 Java 11 与 Java 8 上给出相同计数。高级用户可用 `LABTOOLBOX_IMAGEJ_DIR` 覆盖内置安装。发布 CI 用 `scripts/verify_bundle.py` 校验（ij.jar、JRE 架构、宏、igor）。安装/未签名版本说明见 [docs/INSTALL.md](../INSTALL.md)。
 
 #### OpenCV 引擎（旧）：固定阈值 + 分水岭
 
@@ -294,14 +375,17 @@ value' ~ C(area_label) * C(time)      # OLS，Type II 平方和
 | `CellCounterEngine` | `split_thresh` | `0.1` | 分水岭前景占最大距离的比例 |
 | `LiveDeadCellCounter` | `area_um2` | `None` | 未使用 |
 
+CLI 选项与 `run()` 参数一一对应（`--min-size` → `min_size`、`--skip-repeats` → `skip_repeats`、`--qc-dir` → `qc_dir`、`--area-um2` → `area_um2`）；省略 `--min-size` 时用引擎默认值。GUI 暴露引擎选择 + ImageJ 状态 + 最小面积 + 输出目录，圆形度/阈值只对 OpenCV 引擎生效。
+
 ### 实现说明
 
-* 包 `labtoolbox/livedead_cellcounter/cellcounter.py`（581 行）；依赖 NumPy、pandas、matplotlib（Agg）；ImageJ 后端额外只用 Java 子进程 + `csv`；OpenCV 后端需要 `opencv-python`。
-* 类/函数：`find_imagej_dir`、`ImageJEngine`（`_macro_path`、`_batch_dir`、`count_live_dead`、`count_live_dead_pair`）、`CellCounterEngine`（`extract_channel`、`count_cells_in_channel`、`count_live_dead`）、`parse_filename`、`LiveDeadCellCounter`（`scan_structure`、`count_all`、`summarize`、`anova`、`plot`、`report`）、`run`。
-* commit `0e0508e` 时该模块**未注册进统一 CLI**（`labtoolbox/cli.py` 没有 cell-counter 子命令），pyproject 的包列表也未包含它；可用入口是 Python API 与 GUI 标签页 **🔬 LIVE/DEAD 细胞计数**。
+* 包 `labtoolbox/livedead_cellcounter/cellcounter.py`（集成 PR 后 727 行）；依赖 NumPy、pandas、matplotlib（Agg）；ImageJ 后端额外只用 Java 子进程 + `csv`；OpenCV 后端需要 `opencv-python`。
+* 类/函数：`_dedupe`、`_bundle_roots`、`imagej_dir_candidates`、`find_imagej_jar`、`find_java`、`find_imagej`、`find_imagej_dir`、`_macro_candidates`、`find_macro`、`imagej_status`、`ImageJEngine`（`_macro_path`、`_batch_dir`、`count_live_dead`、`count_live_dead_pair`）、`CellCounterEngine`（`extract_channel`、`count_cells_in_channel`、`count_live_dead`）、`parse_filename`、`LiveDeadCellCounter`（`scan_structure`、`count_all`、`summarize`、`anova`、`plot`、`report`）、`run`。
+* 集成 PR 起已注册进统一 CLI（**`livedead-cellcounter`**），并列入 `pyproject.toml` 的 `packages`；`[build]` extra/桌面应用会打包它。入口：GUI 标签页、CLI、Python API。
 * `run()` 把 `**engine_kwargs` 转给所选引擎；`verbose` **不是** `run()` 的参数（传入会 `TypeError`），只有 `report()` 有。
 * 宏文件必须保持纯 ASCII（ImageJ 不以 UTF-8 读宏文件）；其头部注释记录了 5 行参数协议。
-* 导入时若存在 `C:\Windows\Fonts\msyh.ttc`/`simhei.ttf` 会注册中文字体。图的标题/轴标签为硬编码英文。
+* 图字体由 `labtoolbox.common.fonts` 解析（导入时调用 `setup_matplotlib_cjk()`）：Windows 微软雅黑/SimHei、macOS PingFang/Hiragino、Linux Noto/WenQuanYi；环境变量 `LABTOOLBOX_CJK_FONT` 可覆盖字体家族。图的标题/轴标签为硬编码英文。
+* 探测辅助函数都是无状态普通函数；`imagej_status()` 也被 GUI 调用。内置 ImageJ/JRE 布局记录于 `docs/INSTALL.md`，发布 CI 用 `scripts/verify_bundle.py` 断言。
 
 ### 假设、局限与已知怪癖
 
@@ -311,8 +395,9 @@ value' ~ C(area_label) * C(time)      # OLS，Type II 平方和
 * **柱状图的 ANOVA 标注通常不出现。** 绘图代码找 `"p"` 列，但 statsmodels 分支返回的是 `factor/sum_sq/df/F/PR(>F)`；只有回退分支有 `p`。因此标注实际只限于回退路径（此时 `aov["p"].iloc[0]` 是第一个时间点的 p 值）。
 * **时间排序按字典序。** 时间按字符串排序（`"10h"` 排在 `"2h"` 前）；若顺序重要请改成补零标签。
 * **ANOVA 作用于 log10(live+1) 计数**，不是存活率；`log10=True` 是默认，Type II 平方和，不显式建模不平衡单元，无事后检验、无多重比较校正、不把重复当随机效应。
-* **GUI 参数有一部分失效。** GUI 会传 `min_roundness`、`green_thresh`、`red_thresh`；默认 ImageJ 模式下这些键被 `run()` 过滤掉并静默忽略（只有 `min_size`/`max_size`/`bg_offset`/`qc_dir`/`imagej_dir` 会到达 ImageJ 引擎）。GUI 的提示文字已说明这一点。
-* **`area_um2` 是死代码**；不计算任何面积归一化密度。
+* **GUI 参数传递（集成 PR 已修复）。** GUI 现在**只在**选择 `backend="opencv"` 时发送 `min_roundness`/`green_thresh`/`red_thresh`；此前它们在 ImageJ 模式下也会传入，随后被 `run()` 的参数过滤静默丢弃。ImageJ 模式下只有 `min_size`（以及 API/CLI 的可选 `qc_dir`）可调。
+* **没有自动引擎回退。** 找不到 ImageJ 安装、JRE 或宏时，ImageJ 引擎抛出 `FileNotFoundError` 并列出搜索候选，而不是静默切换引擎；要用旧引擎请显式传 `--backend opencv`。GUI 会在运行前显示探测状态。
+* **`area_um2` 是死代码**；不计算任何面积归一化密度。API 与 CLI `--area-um2` 选项仍然暴露（帮助文字写的是“界面密度换算”），目前不产生任何效果。
 * **通道陷阱启发式**（命名通道很暗时改数最亮通道）是务实的修正，不是物理测量；计数异常时请查看 QC 叠加图。
 * `skip_repeats` 精确匹配文件夹名（区分大小写）；请按磁盘上的实际名称传入。
 * **OpenCV 后端只为回归/排障保留。** 其固定阈值与分水岭参数已被 ImageJ 方法取代（项目决定，2026-09-11）；515 nm 系列 160 对视野的历史对比显示 ImageJ 与 OpenCV 的差异主要来自旧引擎缺少通道陷阱修正。
@@ -322,6 +407,7 @@ value' ~ C(area_label) * C(time)      # OLS，Type II 平方和
 * 可选的逐图 QC 叠加图（`qc_dir` → `<stem>_qc.png`）显示每个被计数粒子的编号、实际使用的通道与阈值；这是主要的目视 QC。
 * 原始 CSV 保留 `g_image`、`r_image` 与逐对错误信息，每个计数都可追溯到文件。
 * 跨引擎历史对比可用 `scripts/compare_count_backends.py` 复现（输出不入库）；项目已统一到 ImageJ，因此 OpenCV 引擎不是验证基准。
+* 发布 CI 用 `scripts/verify_bundle.py` 校验打包引擎（内置 `imagej/ij.jar`、平台原生 JRE 架构、随包宏、igor），因此 bundle 损坏会在构建期失败，而不是在用户实验台上失败。
 * 本文档核对演示（commit `0e0508e`，Python 3.11、OpenCV 4.13、`backend="opencv"`）：`examples/livedead_counter_demo` → 24 对；例如 repeat1/1h/Area1：live 13、dead 12；汇总 Area1 1h = 48.2 % 存活率（n = 6 对）；ANOVA 表如上（Type II、log10 活菌计数）。ImageJ 后端在文档编写机器上无法运行（无 ImageJ 安装），其行为依据宏源码描述。
 
 ### 参考文献
