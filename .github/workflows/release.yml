@@ -234,6 +234,6 @@ jobs:
             Install guide: https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/INSTALL.md
             Module docs: https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/modules/README.md
           files: |
-            artifacts/*.zip
-            artifacts/*.dmg
-            artifacts/*.exe
+            artifacts/**/*.zip
+            artifacts/**/*.dmg
+            artifacts/**/*.exe
