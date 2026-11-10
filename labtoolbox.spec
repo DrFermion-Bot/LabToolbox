@@ -15,7 +15,9 @@ Everything the app needs at run time is bundled: no ImageJ/Java installation and
 network download is required on the target machine.
 """
 import os
+import platform
 import re
+import subprocess
 import sys
 
 # Project root (PyInstaller sets SPECFILE to the .spec path)
@@ -66,10 +68,17 @@ datas = []
 #   <bundle>/imagej/jre/Contents/Home/bin/java             (macOS Intel / Apple Silicon)
 IMAGEJ_DIR = os.path.join(ROOT, "vendor", "imagej")
 if not os.path.isdir(IMAGEJ_DIR):
-    raise SystemExit(
-        "vendor/imagej is missing - run 'python scripts/fetch_imagej.py' before building.\n"
-        "It assembles ImageJ 1.54 (ij.jar) + a native Temurin 11 JRE for this platform."
-    )
+    # Self-contained builds: the repository's current CI workflow does not run the
+    # fetch step, so assemble vendor/imagej here when it is missing.
+    if sys.platform.startswith("win"):
+        _plat = "windows"
+    elif sys.platform == "darwin":
+        _plat = "macos-arm64" if platform.machine() == "arm64" else "macos-intel"
+    else:
+        raise SystemExit("unsupported build platform for bundled ImageJ")
+    print(f"[labtoolbox.spec] vendor/imagej missing; fetching platform={_plat}")
+    subprocess.check_call([sys.executable, os.path.join(ROOT, "scripts", "fetch_imagej.py"),
+                           "--platform", _plat])
 if not os.path.isfile(os.path.join(IMAGEJ_DIR, "ij.jar")):
     raise SystemExit("vendor/imagej/ij.jar is missing - re-run 'python scripts/fetch_imagej.py'")
 datas.append((IMAGEJ_DIR, "imagej"))
@@ -95,10 +104,10 @@ if os.path.isfile(THIRD_PARTY):
 try:
     import igor as _igor  # noqa: F401
 except ImportError:
-    raise SystemExit(
-        "igor is missing - .ibw (Bruker AFM) support would silently break in the bundle.\n"
-        "Install it with: pip install \"igor @ git+https://github.com/wking/igor\""
-    )
+    # Self-contained builds: install the real igor package (PyPI "igor" is empty).
+    print("[labtoolbox.spec] igor missing; installing from GitHub")
+    subprocess.check_call([sys.executable, "-m", "pip", "install",
+                           "igor @ git+https://github.com/wking/igor"])
 try:
     import importlib.metadata as _md
 
