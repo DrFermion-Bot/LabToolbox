@@ -15,9 +15,12 @@
 | `livedead_cellcounter` | LIVE/DEAD fluorescence image cell counting (repeat/time/area, summary + ANOVA) | numpy, opencv, Pillow |
 | `contact_angle` | Contact angle / surface free energy (OWRK) | numpy, scipy |
 | `surfmetrics` | AFM/SEM height map → 3D + roughness (Sa/Sq/Sz) + surface area (Sdr) | numpy, scipy, tifffile, igor* |
+| `contact_schematic` | **AFM pipeline end step**: measured geometry (period / groove depth / pillar height) → 3D bacteria-on-texture schematic + contact-geometry figure | numpy, scipy, matplotlib, igor* |
 | `semtexture` | **Coupon-to-coupon consistency**: SEM period / orientation / coherence + tile-based ordered-area map + debris density + batch criteria (period CV, orientation SD, ICC) | numpy, scipy, pandas, matplotlib, Pillow |
 
 > *`igor` (Bruker .ibw direct read) must be installed from GitHub: `pip install "igor @ git+https://github.com/wking/igor"` (the PyPI `igor` package is an empty shell — do not install).
+
+📚 **Per-module implementation documentation** (algorithms, formulas, parameters, limitations, references — English + 中文): [docs/modules/README.md](docs/modules/README.md).
 
 ## 🖥️ GUI (tkinter, zero extra dependencies)
 
@@ -56,16 +59,38 @@ labtoolbox surfmetrics --folder "AFM data dir" --output out   # batch: direct .i
 labtoolbox surfmetrics --file sample.ibw                     # single file
 ```
 
-## 📦 Releases (one-click install)
+## 📥 Downloads & installation
 
-Pre-built binaries for **Windows** and **macOS** are available in [Releases](https://github.com/DrFermion/LabToolbox/releases) — no Python environment needed:
+One desktop app per platform. The installer and the macOS DMGs **bundle ImageJ 1.54
+and a private Java runtime**, so no Python / ImageJ / Java installation is required
+and nothing is downloaded on first use.
 
-| Platform | Package | Usage |
+| Platform | File | Notes |
 |---|---|---|
-| 🪟 Windows | `LabToolbox-Windows.zip` | Unzip → double-click `LabToolbox.exe` |
-| 🍎 macOS | `LabToolbox-macOS.zip` | Unzip → drag `LabToolbox.app` into Applications |
+| 🪟 Windows 10/11 (x64) | `LabToolbox-Setup-<version>.exe` | Installer (recommended): Chinese/English wizard, uninstaller |
+| 🪟 Windows 10/11 (x64) | `LabToolbox-Windows-x64.zip` | Portable: unzip and run, no install |
+| 🍎 macOS 11+ · Apple Silicon | `LabToolbox-macOS-AppleSilicon.dmg` | Native for M1/M2/M3/M4 |
+| 🍎 macOS 11+ · Intel | `LabToolbox-macOS-Intel.dmg` | Native for Intel Macs |
 
-> Note: macOS may warn "unidentified developer" (free-signed builds) — right-click → Open to launch.
+> ⚠️ **These builds are unsigned** — no Windows code-signing certificate and no
+> Apple Developer ID / notarization. On Windows, SmartScreen shows *"Windows
+> protected your PC"* → **More info → Run anyway**. On macOS, first launch needs
+> **Control-click → Open**, or run
+> `xattr -dr com.apple.quarantine /Applications/LabToolbox.app`.
+> Full steps, troubleshooting and how to add signing later:
+> **[docs/INSTALL.md](docs/INSTALL.md)**.
+
+Downloads: <https://github.com/DrFermion/LabToolbox/releases>
+
+### Bundled ImageJ (nothing to install)
+
+The LIVE/DEAD cell counter defaults to classic **ImageJ 1.54** (`Analyze Particles`).
+The packaged app embeds `ij.jar`, a native **Eclipse Temurin 11 JRE** (x86_64 on
+Intel, arm64 on Apple Silicon) and the read-only macro
+`scripts/imagej/count_livedead.ijm` — so counting works offline and out of the box.
+ImageJ 1.54 was verified to give identical counts on Java 11 and Java 8. Advanced
+users can override the engine location with the `LABTOOLBOX_IMAGEJ_DIR`
+environment variable. License/provenance: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## 🧩 Modular Design (built for extension)
 
@@ -95,11 +120,29 @@ labtoolbox/
 ## 🛠️ Building from Source
 
 ```bash
-pip install pyinstaller numpy scipy matplotlib pandas openpyxl statsmodels opencv-python Pillow
+pip install -e ".[build]"        # pyinstaller + igor (Bruker .ibw direct read)
+python scripts/fetch_imagej.py   # ImageJ 1.54 + native Temurin 11 JRE -> vendor/imagej
 pyinstaller labtoolbox.spec --noconfirm
+python scripts/verify_bundle.py  # check dist contains imagej/ij.jar, JRE, macro, igor
 ```
 
-Cross-platform builds (Windows + macOS) are automated via GitHub Actions on every `v*` tag push.
+The macOS `Info.plist` version is taken from the git tag (`APP_VERSION`) or
+`pyproject.toml` — it is not hardcoded. App icons are replaceable:
+`assets/labtoolbox.ico` / `assets/labtoolbox.icns` (regenerate with
+`python scripts/build_icons.py`).
+
+Cross-platform builds are automated via GitHub Actions on every `v*` tag push
+(and manual `workflow_dispatch` for build-only runs):
+
+| Job | Runner | Output |
+|---|---|---|
+| Windows x64 | `windows-latest` | `LabToolbox-Setup-<version>.exe` + `LabToolbox-Windows-x64.zip` |
+| macOS Intel | `macos-15-intel` | `LabToolbox-macOS-Intel.dmg` |
+| macOS Apple Silicon | `macos-15` (arm64) | `LabToolbox-macOS-AppleSilicon.dmg` |
+
+Builds are unsigned (no Authenticode, no Developer ID / notarization); see
+[docs/INSTALL.md](docs/INSTALL.md) for the user-facing workarounds and how to add
+signing to the workflow later.
 
 ## 📄 License
 

@@ -4,27 +4,34 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-build/
-dist/
 
-# 输出
-output/
-*.png
-
-# 构建产物
+# Build artifacts / 构建产物
 build/
 dist/
 *.spec.bak
+installer/*.exe
+*.log
+
+# ImageJ + JRE downloaded at build time by scripts/fetch_imagej.py (not committed)
+vendor/
+# Local verification tools (Inno Setup etc.), not committed
+.tools/
+
+# Output
+output/
+*.png
+
+# Application icons must be committed (exception to the *.png rule above)
+!assets/*.png
 
 # IDE
 .vscode/
 .idea/
 
-# 系统
+# System
 Thumbs.db
 .DS_Store
 
-# 数据 (原始数据保留在 OneDrive, 不入库; 示例数据除外)
+# Data (raw data stays in OneDrive; example data excepted)
 data/raw/
-# 示例数据允许入库
 !data/examples/
