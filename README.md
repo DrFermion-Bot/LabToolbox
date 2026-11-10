@@ -140,7 +140,7 @@ MIT (待定)
   批处理 (自适应阈值背景众数+40 + Analyze Particles 3-500px)。宏在 `scripts/imagej/count_livedead.ijm`。
   **发布版已内置** ImageJ 1.54 与原生 Java 运行时 (无需安装 Java/ImageJ, 离线可用, 宏只读不再复制)；
   源码运行时可用环境变量 `LABTOOLBOX_IMAGEJ_DIR` 指向本机 ImageJ 安装目录 (经典 1.54, 非 Fiji)。
-  引擎缺失时回退到 `backend="opencv"`。
+  引擎缺失时会报错并列出候选路径；旧 OpenCV 引擎需显式传 `--backend opencv`（不会自动回退）。
   旧的 Python/OpenCV 分水岭引擎保留为 `backend="opencv"`, 仅供故障排查/回归对照 —
   方法学与交付统一走 ImageJ (2026-09-11 定), 不再做 Python/ImageJ 双引擎交叉验证。
   历史对比: 515nm 组 160 配对, ImageJ vs 旧 OpenCV 引擎差异主因 = 旧引擎缺通道陷阱修正。

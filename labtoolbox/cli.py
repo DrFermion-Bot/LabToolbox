@@ -99,7 +99,7 @@ def cmd_livedead_cellcounter(args):
         else:
             print("⚠️ --qc-dir 仅在 imagej 引擎下生效, 已忽略 (opencv 引擎无数圈 QC)", file=sys.stderr)
     result = ldc_run(folder=args.folder, output_dir=args.output,
-                     area_um2=args.area_um2, backend=args.backend,
+                     backend=args.backend,
                      skip_repeats=tuple(args.skip_repeats or ()), **engine_kw)
     print(f"✅ LIVE/DEAD 细胞计数完成 (backend={args.backend})")
     summ = result["summary"]
@@ -238,8 +238,6 @@ def build_parser():
                    help="计数引擎: imagej (默认, 方法学口径) / opencv (旧 Python 引擎, 仅排查对照)")
     p.add_argument("--min-size", type=int, default=None, dest="min_size",
                    help="最小粒子面积 px (缺省用引擎默认: imagej 3 / opencv 10)")
-    p.add_argument("--area-um2", type=float, default=None, dest="area_um2",
-                   help="每张图对应的面积 µm² (可选, 用于界面密度换算)")
     p.add_argument("--skip-repeats", nargs="*", default=None, dest="skip_repeats",
                    metavar="REPEAT", help="跳过无效 repeat, 如 repeat2 (可写多个)")
     p.add_argument("--qc-dir", default=None, dest="qc_dir",
