@@ -57,6 +57,8 @@ labtoolbox livedead --file data/livedead.xlsx
 labtoolbox contact-angle --theta1 72.3 --theta2 48.2
 labtoolbox surfmetrics --folder "AFM data dir" --output out   # batch: direct .ibw read
 labtoolbox surfmetrics --file sample.ibw                     # single file
+labtoolbox livedead-cellcounter examples/livedead_counter_demo --output out  # LIVE/DEAD image counting (ImageJ)
+labtoolbox schematic --input "AFM data dir" --out out --label "515 nm"      # contact-geometry schematic (AFM end step)
 ```
 
 ## 📥 Downloads & installation

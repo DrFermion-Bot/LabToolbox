@@ -54,9 +54,11 @@ python -m labtoolbox.gui
 labtoolbox --help
 labtoolbox growth-curve --data data/growth_Ecoli.xlsx
 labtoolbox lipss-dloa --folder data/sem_images/
-labtoolbox xdlvo --config data/xdlvo_inputs.csv
-labtoolbox livedead --file data/livedead.xlsx --group 5%F-DLC
-labtoolbox contact-angle --file data/contact_angles.csv
+labtoolbox sem-texture --folder data/sem_images/ --output 结果目录   # 织构一致性
+labtoolbox xdlvo --angles '{"theta_diiodo":48.2,"theta_water":72.3,"theta_form":61.5}'
+labtoolbox livedead --file data/livedead.xlsx
+labtoolbox livedead-cellcounter examples/livedead_counter_demo --output 结果目录   # LIVE/DEAD 图像计数 (默认 ImageJ)
+labtoolbox contact-angle --theta1 72.3 --theta2 48.2
 labtoolbox surfmetrics --folder "AFM 数据目录" --output 结果目录   # 批量: .ibw 直读, 自动校准
 # 通道默认自动选 ZSR (ZSensor Retrace, 表面粗糙度分析要求); 旧口径用 --channel height
 # 参考线: --profile-mode cross (LIPSS 一条跨纹线) / hv (横纵两条) / auto; 条纹搜索带 --stripe-band 258 772
@@ -69,7 +71,7 @@ labtoolbox schematic --input "AFM 数据目录" --out 结果目录 --label "515 
 ```
 🧪 实验室工具箱 LabToolbox
 ┌──────────────────────────────────────────────┐
-│ [📈 生长曲线] [🔬 LIPSS/DLOA] [🧫 XDLVO] [🦠 LIVE/DEAD] [💧 接触角] [🔬 细胞计数] [🏔️ 表面形貌] [✏️ 接触示意] │
+│ [📈 生长曲线] [🔬 LIPSS/DLOA] [🧭 织构一致性] [🧫 XDLVO] [🦠 LIVE/DEAD] [💧 接触角] [🔬 细胞计数] [🏔️ 表面形貌] [✏️ 接触示意] │
 │                                                                      │
 │  每个标签页 = 一个模块的配置面板                                     │
 │  (选文件/填参数 → 点"运行" → 结果自动输出)                          │
@@ -77,7 +79,7 @@ labtoolbox schematic --input "AFM 数据目录" --out 结果目录 --label "515 
 ```
 
 - 启动: `python -m labtoolbox.gui`
-- 每个模块独立标签页（含接触几何示意图）, 参数可视化填写
+- 9 个独立标签页（含接触几何示意图与织构一致性）, 参数可视化填写
 - 分析结果自动保存到输出目录, 完成弹窗提示
 
 ## 🧩 模块化设计 (为扩展而生)
