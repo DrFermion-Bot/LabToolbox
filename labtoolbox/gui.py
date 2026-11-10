@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 实验室工具箱 GUI 界面 (tkinter) - 支持中英文切换
-- 5 个模块, 每个都有独立配置面板
-- 顶部 中/EN 切换按钮
+- 9 个标签页, 每个模块一个独立配置面板
+- 顶部 中/EN 切换按钮; 字体按平台自动选 (Windows 雅黑 / macOS PingFang / Linux Noto)
 - 统一入口: python -m labtoolbox.gui
 """
 import os
@@ -17,8 +17,11 @@ from labtoolbox.xdlvo import run as xdlvo_run
 from labtoolbox.livedead import run as ld_run
 from labtoolbox.contact_angle import run as ca_run
 from labtoolbox.livedead_cellcounter import run as ldc_run
+from labtoolbox.livedead_cellcounter.cellcounter import imagej_status
 from labtoolbox.surfmetrics import run as sm_run
 from labtoolbox.semtexture import run as stx_run
+from labtoolbox.contact_schematic import run as schematic_run
+from labtoolbox.common.fonts import pick_tk_font
 from labtoolbox.i18n import tr
 
 
@@ -34,22 +37,25 @@ class LabToolboxApp:
         self.root.configure(bg="#1e1e2e")
         self.root.attributes("-topmost", False)
 
+        # 跨平台中文字体 (Windows 雅黑 / macOS PingFang / Linux Noto; 旧代码写死雅黑)
+        self.font_family = pick_tk_font(self.root) or "TkDefaultFont"
+
         # 样式
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("TNotebook", background="#1e1e2e", borderwidth=0)
         style.configure("TNotebook.Tab", background="#313244", foreground="#cdd6f4",
-                        padding=(16, 8), font=("Microsoft YaHei UI", 10))
+                        padding=(16, 8), font=(self.font_family, 10))
         style.map("TNotebook.Tab", background=[("selected", "#89b4fa")],
                   foreground=[("selected", "#11111b")])
         style.configure("TFrame", background="#1e1e2e")
         style.configure("TLabelframe", background="#181825", foreground="#cdd6f4")
         style.configure("TLabelframe.Label", background="#181825", foreground="#89b4fa",
-                        font=("Microsoft YaHei UI", 10, "bold"))
+                        font=(self.font_family, 10, "bold"))
         style.configure("TLabel", background="#181825", foreground="#cdd6f4",
-                        font=("Microsoft YaHei UI", 10))
+                        font=(self.font_family, 10))
         style.configure("TButton", background="#45475a", foreground="#cdd6f4",
-                        font=("Microsoft YaHei UI", 10), padding=(10, 6))
+                        font=(self.font_family, 10), padding=(10, 6))
         style.map("TButton", background=[("active", "#585b70")])
 
         # 顶部栏: 标题 + 语言切换
@@ -58,13 +64,13 @@ class LabToolboxApp:
 
         self.title_label = tk.Label(header, text=tr("🧪 实验室工具箱 LabToolbox", self.lang),
                                     bg="#1e1e2e", fg="#89b4fa",
-                                    font=("Microsoft YaHei UI", 16, "bold"))
+                                    font=(self.font_family, 16, "bold"))
         self.title_label.pack(side="left")
 
         self.lang_btn = tk.Button(header, text="EN", command=self.toggle_lang,
                                   bg="#45475a", fg="#cdd6f4", relief="flat",
                                   activebackground="#89b4fa", activeforeground="#11111b",
-                                  font=("Microsoft YaHei UI", 10, "bold"),
+                                  font=(self.font_family, 10, "bold"),
                                   cursor="hand2", padx=12, pady=2)
         self.lang_btn.pack(side="right")
 
@@ -73,18 +79,36 @@ class LabToolboxApp:
         self.notebook.pack(fill="both", expand=True, padx=10, pady=5)
 
         self._build_all_tabs()
+        self._fit_window_to_tabs()
 
         # 底部状态栏
         self.status_var = tk.StringVar(value=tr("就绪 - 选择一个模块配置并运行", self.lang))
         status = tk.Label(self.root, textvariable=self.status_var, bg="#1e1e2e",
-                          fg="#a6e3a1", font=("Microsoft YaHei UI", 9), pady=6)
+                          fg="#a6e3a1", font=(self.font_family, 9), pady=6)
         status.pack(fill="x")
+
+    def _fit_window_to_tabs(self):
+        """按标签页标题实际宽度加宽窗口 (9 个标签页在旧 780px 下会被截断).
+
+        只放宽, 不缩窄 (保留原 780x580 布局); 上限为屏幕可用宽度, 避免超出屏幕.
+        """
+        try:
+            from tkinter import font as tkfont
+            tab_font = tkfont.Font(family=self.font_family, size=10)
+            need = sum(tab_font.measure(tr(text, self.lang)) + 36
+                       for _, text in self._notebook_tabs) + 40
+        except Exception:  # noqa: BLE001 - 量不出来就用原宽度
+            need = 780
+        screen = self.root.winfo_screenwidth() or need
+        width = min(max(780, need), max(780, screen - 120))
+        self.root.geometry(f"{width}x580")
 
     # ---------- 语言切换 ----------
     def toggle_lang(self):
         self.lang = "en" if self.lang == "zh" else "zh"
         self.lang_btn.config(text="中" if self.lang == "en" else "EN")
         self._refresh_all_texts()
+        self._fit_window_to_tabs()
         self.status_var.set(tr("就绪 - 选择一个模块配置并运行", self.lang))
 
     def _refresh_all_texts(self):
@@ -92,7 +116,7 @@ class LabToolboxApp:
         self.title_label.config(text=tr("🧪 实验室工具箱 LabToolbox", self.lang))
         for widget, key in self._widgets:
             try:
-                widget.config(text=tr(key, self.lang))
+                widget.config(text=key(self.lang) if callable(key) else tr(key, self.lang))
             except Exception:
                 pass
         # notebook 标签页标题需要专门 API 更新
@@ -179,24 +203,45 @@ class LabToolboxApp:
                                    tr("范例文件不存在: ", self.lang) + " / ".join(candidates))
             return
         try:
-            os.startfile(path)  # type: ignore
-        except Exception:
-            subprocess.run(["cmd", "/c", "start", "", path])
+            if sys.platform.startswith("win"):
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.run(["open", path], check=False)
+            else:
+                subprocess.run(["xdg-open", path], check=False)
+        except Exception as e:  # noqa: BLE001 - 打不开就用提示兜底
+            messagebox.showwarning(tr("提示", self.lang),
+                                   tr("无法打开范例文件: ", self.lang) + f"{path} ({e})")
 
-    def _run_async(self, fn, *args):
-        """后台线程运行, 完成后更新状态"""
+    def _run_async(self, fn, *args, **kwargs):
+        """后台线程运行, 完成后更新状态 (关键字参数原样透传给 fn)。
+
+        旧实现只收 *args, 而各标签页都用关键字调用 → 点运行按钮会 TypeError;
+        这里补齐 **kwargs, 并把异常消息先存成普通变量 (Python 3 的 except 变量
+        在块结束时被删除, 直接闭包引用会 NameError)。
+        """
         self.status_var.set(tr("⏳ 运行中...", self.lang))
+
         def worker():
             try:
-                result = fn(*args)
-                self.root.after(0, lambda: self.status_var.set(tr("✅ 完成! 输出见输出目录", self.lang)))
-                if isinstance(result, dict) and "figure" in result:
-                    self.root.after(0, lambda: messagebox.showinfo(
-                        tr("完成", self.lang),
-                        f"{tr('分析完成!', self.lang)}\n{tr('图表: ', self.lang)}{result['figure']}"))
-            except Exception as e:
-                self.root.after(0, lambda: self.status_var.set(f"❌ {e}"))
-                self.root.after(0, lambda: messagebox.showerror(tr("错误", self.lang), str(e)))
+                result = fn(*args, **kwargs)
+                self.root.after(0, lambda: self.status_var.set(
+                    tr("✅ 完成! 输出见输出目录", self.lang)))
+                if isinstance(result, dict):
+                    figure = result.get("figure")
+                    if not figure:
+                        figures = result.get("figures") or []
+                        figure = figures[0] if figures else None
+                    if figure:
+                        self.root.after(0, lambda f=figure: messagebox.showinfo(
+                            tr("完成", self.lang),
+                            f"{tr('分析完成!', self.lang)}\n{tr('图表: ', self.lang)}{f}"))
+            except Exception as e:  # noqa: BLE001
+                msg = str(e) or e.__class__.__name__
+                self.root.after(0, lambda: self.status_var.set(f"❌ {msg}"))
+                self.root.after(0, lambda: messagebox.showerror(
+                    tr("错误", self.lang), msg))
+
         threading.Thread(target=worker, daemon=True).start()
 
     # ---------- 标签页 ----------
@@ -209,6 +254,7 @@ class LabToolboxApp:
         self._build_livedead_counter_tab()
         self._build_surfmetrics_tab()
         self._build_semtexture_tab()
+        self._build_schematic_tab()
 
     def _build_growth_tab(self):
         tab = ttk.Frame(self.notebook)
@@ -430,11 +476,27 @@ class LabToolboxApp:
         tip = ttk.Label(inner, foreground="#a6adc8", wraplength=650, justify="left",
                         text=tr("结构: 根文件夹/repeat1/1h/1-g1.tif (g=活菌) + 1-r1.tif (r=死菌)\n"
                                 "文件名: {区域}-{g|r}{编号}, 区域 c=Control, 1/2/3=测试区\n"
-                                "引擎: ImageJ 1.54 自适应阈值 + Analyze Particles (阈值/圆形度参数仅旧 Python 引擎用)", self.lang))
+                                "引擎: imagej (默认方法学: ImageJ 1.54 自适应阈值 + Analyze Particles) / "
+                                "opencv (旧 Python 引擎, 仅排查对照; 阈值/圆形度只对它生效)", self.lang))
         tip.pack(fill="x", padx=8, pady=4)
         self._widgets.append((tip, "结构: 根文件夹/repeat1/1h/1-g1.tif (g=活菌) + 1-r1.tif (r=死菌)\n"
                                    "文件名: {区域}-{g|r}{编号}, 区域 c=Control, 1/2/3=测试区\n"
-                                   "引擎: ImageJ 1.54 自适应阈值 + Analyze Particles (阈值/圆形度参数仅旧 Python 引擎用)"))
+                                   "引擎: imagej (默认方法学: ImageJ 1.54 自适应阈值 + Analyze Particles) / "
+                                   "opencv (旧 Python 引擎, 仅排查对照; 阈值/圆形度只对它生效)"))
+
+        # 引擎选择: imagej = 默认方法学口径; opencv = 旧 Python 引擎, 仅排查/回归对照
+        erow = ttk.Frame(inner)
+        erow.pack(fill="x", pady=3)
+        elbl = ttk.Label(erow, text=tr("计数引擎", self.lang), width=14)
+        elbl.pack(side="left")
+        self._widgets.append((elbl, "计数引擎"))
+        self.ldc_backend = tk.StringVar(value="imagej")
+        ttk.Combobox(erow, textvariable=self.ldc_backend, width=10, state="readonly",
+                     values=["imagej", "opencv"]).pack(side="left")
+        self.ldc_ij_status = ttk.Label(erow, text=self._imagej_status_text(),
+                                       foreground="#a6adc8")
+        self.ldc_ij_status.pack(side="left", padx=(12, 0))
+        self._widgets.append((self.ldc_ij_status, self._imagej_status_text))
 
         # 参数 (可调)
         row = ttk.Frame(inner); row.pack(fill="x", pady=3)
@@ -457,14 +519,20 @@ class LabToolboxApp:
 
         self.ldc_out = tk.StringVar(value="output")
         self._output_row(inner, self.ldc_out)
-        self._run_button(inner, "🚀 运行细胞计数分析",
-                         lambda: self._run_async(
-                             ldc_run, folder=self.ldc_folder.get(),
-                             output_dir=self.ldc_out.get(),
-                             min_size=int(self.ldc_min.get()),
-                             min_roundness=float(self.ldc_round.get()),
-                             green_thresh=int(self.ldc_gt.get()),
-                             red_thresh=int(self.ldc_rt.get())))
+
+        def _run_counter():
+            # 只传当前引擎用得到的参数 (imagej 用不上阈值/圆形度; 方法学未改动)
+            backend = self.ldc_backend.get()
+            engine_kw = {"min_size": int(self.ldc_min.get())}
+            if backend == "opencv":
+                engine_kw.update(min_roundness=float(self.ldc_round.get()),
+                                 green_thresh=int(self.ldc_gt.get()),
+                                 red_thresh=int(self.ldc_rt.get()))
+            self._run_async(ldc_run, folder=self.ldc_folder.get(),
+                            output_dir=self.ldc_out.get(),
+                            backend=backend, **engine_kw)
+
+        self._run_button(inner, "🚀 运行细胞计数分析", _run_counter)
 
     def _build_surfmetrics_tab(self):
         tab = ttk.Frame(self.notebook)
@@ -498,7 +566,9 @@ class LabToolboxApp:
         self._widgets.append((lbl, "像素尺寸 X (nm, 空=自动)"))
         self.sm_px = tk.StringVar(value="")
         ttk.Entry(row, textvariable=self.sm_px, width=12).pack(side="left", padx=4)
-        ttk.Label(row, text="(.ibw 自动读取)", foreground="#a6adc8").pack(side="left")
+        lbl_ibw = ttk.Label(row, text=tr("(.ibw 自动读取)", self.lang), foreground="#a6adc8")
+        lbl_ibw.pack(side="left")
+        self._widgets.append((lbl_ibw, "(.ibw 自动读取)"))
 
         self.sm_out = tk.StringVar(value="output")
         self._output_row(inner, self.sm_out)
@@ -512,6 +582,54 @@ class LabToolboxApp:
                 px=float(self.sm_px.get()) if self.sm_px.get().strip() else None,
                 py=None,
                 output_dir=self.sm_out.get()))
+
+    def _build_schematic_tab(self):
+        """AFM 流程末端: 实测几何 → 细菌黏附 3D 示意图 + 接触几何图 (第 9 标签页)"""
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=tr("📐 接触几何示意", self.lang))
+        self._notebook_tabs.append((tab, "📐 接触几何示意"))
+        inner = ttk.LabelFrame(tab, text=tr("细菌-织构接触几何示意图 (AFM 流程末端)", self.lang))
+        inner.pack(fill="both", expand=True, padx=10, pady=10)
+        self._widgets.append((inner, "细菌-织构接触几何示意图 (AFM 流程末端)"))
+
+        self.sc_folder = tk.StringVar()
+        self._folder_row(inner, "AFM 数据目录", self.sc_folder)
+
+        row = ttk.Frame(inner)
+        row.pack(fill="x", pady=4)
+        lbl = ttk.Label(row, text=tr("样品标签", self.lang), width=18)
+        lbl.pack(side="left")
+        self._widgets.append((lbl, "样品标签"))
+        self.sc_label = tk.StringVar(value="515 nm")
+        ttk.Entry(row, textvariable=self.sc_label, width=12).pack(side="left", padx=4)
+        lbl2 = ttk.Label(row, text=tr("(进标题, 如 515 nm)", self.lang), foreground="#a6adc8")
+        lbl2.pack(side="left")
+        self._widgets.append((lbl2, "(进标题, 如 515 nm)"))
+
+        tip = ttk.Label(inner, foreground="#a6adc8", wraplength=650, justify="left",
+                        text=tr("输出: fig1/2/3 接触示意图 + geometry_measurements.csv + README.md", self.lang))
+        tip.pack(fill="x", padx=8, pady=4)
+        self._widgets.append((tip, "输出: fig1/2/3 接触示意图 + geometry_measurements.csv + README.md"))
+
+        self.sc_out = tk.StringVar(value="output")
+        self._output_row(inner, self.sc_out)
+        self._run_button(inner, "🚀 运行接触几何示意",
+                         lambda: self._run_async(
+                             schematic_run,
+                             folder=self.sc_folder.get(),
+                             output_dir=self.sc_out.get(),
+                             label=self.sc_label.get().strip() or "515 nm"))
+
+    def _imagej_status_text(self, lang=None):
+        """ImageJ 探测状态 (细胞计数标签页提示; 语言切换时作为 callable 刷新)."""
+        lang = lang or self.lang
+        try:
+            st = imagej_status()
+        except Exception:  # noqa: BLE001 - 状态提示失败不影响使用
+            st = {"found": False, "dir": None}
+        if st.get("found") and st.get("dir"):
+            return f"ImageJ: {st['dir']}"
+        return "ImageJ: " + tr("未找到 (可设 LABTOOLBOX_IMAGEJ_DIR)", lang)
 
     def run(self):
         self.root.mainloop()

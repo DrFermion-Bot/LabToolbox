@@ -50,10 +50,12 @@ TRANSLATIONS = {
     "图像根文件夹": "Image root folder",
     "结构: 根文件夹/repeat1/1h/1-g1.tif (g=活菌) + 1-r1.tif (r=死菌)\n"
     "文件名: {区域}-{g|r}{编号}, 区域 c=Control, 1/2/3=测试区\n"
-    "引擎: ImageJ 1.54 自适应阈值 + Analyze Particles (阈值/圆形度参数仅旧 Python 引擎用)":
+    "引擎: imagej (默认方法学: ImageJ 1.54 自适应阈值 + Analyze Particles) / "
+    "opencv (旧 Python 引擎, 仅排查对照; 阈值/圆形度只对它生效)":
         "Structure: root/repeat1/1h/1-g1.tif (g=live) + 1-r1.tif (r=dead)\n"
         "Filename: {area}-{g|r}{number}, c=Control, 1/2/3=test area\n"
-        "Engine: ImageJ 1.54 adaptive threshold + Analyze Particles (threshold/roundness apply to the legacy Python engine only)",
+        "Engine: imagej (default methodology: ImageJ 1.54 adaptive threshold + Analyze Particles) / "
+        "opencv (legacy Python engine, troubleshooting only; threshold/roundness apply to it only)",
     "最小面积(px)": "Min area (px)",
     "圆形度": "Roundness",
     "绿阈值": "Green thresh",
@@ -80,6 +82,21 @@ TRANSLATIONS = {
     "分块边长 (px)": "Tile edge (px)",
     "判定窗边长 (µm)": "Window edge (µm)",
     "🚀 运行一致性分析": "🚀 Run consistency analysis",
+    # 细胞计数引擎选择 (第 6 标签页)
+    "计数引擎": "Counting engine",
+    "未找到 (可设 LABTOOLBOX_IMAGEJ_DIR)": "not found (set LABTOOLBOX_IMAGEJ_DIR)",
+    # 接触几何示意标签页 (第 9 模块)
+    "📐 接触几何示意": "📐 Contact Schematic",
+    "细菌-织构接触几何示意图 (AFM 流程末端)":
+        "Bacteria-texture contact schematic (end of AFM flow)",
+    "AFM 数据目录": "AFM data folder",
+    "样品标签": "Sample label",
+    "输出: fig1/2/3 接触示意图 + geometry_measurements.csv + README.md":
+        "Outputs: fig1/2/3 schematics + geometry_measurements.csv + README.md",
+    "🚀 运行接触几何示意": "🚀 Run contact schematic",
+    "(进标题, 如 515 nm)": "(shown in title, e.g. 515 nm)",
+    "无法打开范例文件: ": "Cannot open example file: ",
+    "(.ibw 自动读取)": "(read from .ibw automatically)",
 }
 
 

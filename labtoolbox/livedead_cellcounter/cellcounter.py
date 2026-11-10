@@ -24,9 +24,11 @@ LIVE/DEAD 荧光显微镜细胞计数模块 (LiveDeadCellCounter)
   - 柱状图 (Control/Area1/Area2... 分组 + ANOVA 标注)
   - 统计分析表 (双因素 ANOVA + 逐时间点 Tukey)
 """
+import glob
 import os
 import re
-import glob
+import shutil
+import sys
 import warnings
 
 import numpy as np
@@ -35,27 +37,176 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
 
+from ..common.fonts import platform_key, setup_matplotlib_cjk
 from ..common.io_utils import save_figure, save_csv, ensure_output_dir
 
-# 中文字体
-for fp in [r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\simhei.ttf"]:
-    if os.path.exists(fp):
-        font_manager.fontManager.addfont(fp)
-        break
+# 中文字体 (Windows 雅黑 / macOS PingFang / Linux Noto, 见 common/fonts.py)
+try:
+    setup_matplotlib_cjk()
+except Exception:  # noqa: BLE001 - 字体只影响图注显示, 不能阻塞计数
+    pass
 
 
-# ImageJ 安装目录候选 (2026-10: F: 已搬到 E:; 依次探测, 兼容再次搬家)
+# ==================== ImageJ 发现 (源码运行 + PyInstaller 打包 app) ====================
+# 打包路径契约 (与 packaging/labtoolbox.spec 一致, 随安装包分发, 无运行时下载):
+#   <bundle>/imagej/ij.jar
+#   <bundle>/imagej/jre/bin/java.exe                  Windows (Temurin JRE)
+#   <bundle>/imagej/jre/Contents/Home/bin/java        macOS (Temurin JRE)
+#   <bundle>/scripts/imagej/count_livedead.ijm        宏 (只读直接引用, 不复制)
+# bundle 根 = sys._MEIPASS: PyInstaller 6 Windows onedir 的 _internal / macOS .app
+# 的 Contents/Frameworks; 另兼容 exe 同级 imagej/ (onedir 平铺) 与 .app 的
+# Contents/Resources|Frameworks. 环境变量 LABTOOLBOX_IMAGEJ_DIR 可覆盖 (指向含
+# ij.jar 的 ImageJ 目录, 或指向含 imagej/ 的 bundle 根).
+
+# 旧版源码安装候选 (2026-10: F: 已搬到 E:; 依次探测, 兼容再次搬家)
 IMAGEJ_CANDIDATES = [r"E:/ImageJ/ImageJ", r"F:/ImageJ/ImageJ", r"C:/Users/PC/Downloads/ImageJ"]
+
+# 本模块所在仓库根: labtoolbox/livedead_cellcounter/cellcounter.py → 上三级.
+# 打包后 __file__ 在 _MEIPASS 内, 该路径自然等于 bundle 根, 不会指回构建机.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+_MACRO_NAME = "count_livedead.ijm"
+
+# ImageJ 安装目录里的 java 相对路径 (按平台排序; 三种 JRE 布局都认)
+_JAVA_REL = {
+    "win32": [("jre", "bin", "java.exe"), ("jre", "bin", "java"),
+              ("jre", "Contents", "Home", "bin", "java"),
+              ("bin", "java.exe"), ("bin", "java")],
+    "darwin": [("jre", "Contents", "Home", "bin", "java"), ("jre", "bin", "java"),
+               ("jre", "bin", "java.exe"), ("bin", "java")],
+}
+_JAVA_REL_DEFAULT = [("jre", "bin", "java"), ("jre", "Contents", "Home", "bin", "java"),
+                     ("jre", "bin", "java.exe"), ("bin", "java")]
+
+
+def _dedupe(paths):
+    """去重但保持顺序 (同一路径只探测一次)."""
+    out, seen = [], set()
+    for p in paths:
+        if not p:
+            continue
+        key = os.path.normcase(os.path.abspath(p))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
+def _bundle_roots():
+    """PyInstaller/打包 app 的根目录候选 (源码运行返回空列表)."""
+    if not (getattr(sys, "frozen", False) or getattr(sys, "_MEIPASS", None)):
+        return []
+    roots = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(meipass)
+        roots.append(os.path.join(meipass, "_internal"))
+        contents = os.path.dirname(os.path.abspath(meipass))
+        roots += [os.path.join(contents, "Resources"),
+                  os.path.join(contents, "Frameworks")]
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    roots.append(exe_dir)
+    roots.append(os.path.join(exe_dir, "_internal"))
+    contents = os.path.dirname(exe_dir)
+    roots += [os.path.join(contents, "Resources"), os.path.join(contents, "Frameworks")]
+    return _dedupe(roots)
+
+
+def imagej_dir_candidates():
+    """按优先级返回 ImageJ 安装目录候选 (不保证存在)."""
+    cands = []
+    env = os.environ.get("LABTOOLBOX_IMAGEJ_DIR", "").strip()
+    if env:
+        cands += [env, os.path.join(env, "imagej")]
+    for root in _bundle_roots():
+        cands.append(os.path.join(root, "imagej"))
+    cands += [os.path.join(_REPO_ROOT, "imagej"),
+              os.path.join(_REPO_ROOT, "vendor", "imagej")]
+    cands += list(IMAGEJ_CANDIDATES)
+    return _dedupe(cands)
+
+
+def find_imagej_jar(imagej_dir):
+    """ImageJ 核心 jar; 不存在返回 None."""
+    if not imagej_dir:
+        return None
+    p = os.path.join(imagej_dir, "ij.jar")
+    return p if os.path.isfile(p) else None
+
+
+def find_java(imagej_dir):
+    """在 ImageJ 目录里找 java 可执行文件 (平台相关布局).
+
+    找不到时才退回 PATH 里的 java (仅为源码/开发方便; 打包版总是自带 JRE).
+    """
+    if not imagej_dir:
+        return None
+    for rel in _JAVA_REL.get(platform_key(), _JAVA_REL_DEFAULT):
+        p = os.path.join(imagej_dir, *rel)
+        if os.path.isfile(p):
+            return p
+    return shutil.which("java")
+
+
+def find_imagej():
+    """探测 ImageJ: {'dir','jar','java','searched'} — 找不到时 dir/jar/java 为 None."""
+    searched = imagej_dir_candidates()
+    for d in searched:
+        jar = find_imagej_jar(d)
+        if jar:
+            return {"dir": d, "jar": jar, "java": find_java(d), "searched": searched}
+    return {"dir": None, "jar": None, "java": None, "searched": searched}
 
 
 def find_imagej_dir():
-    for c in IMAGEJ_CANDIDATES:
-        if (os.path.exists(os.path.join(c, "ij.jar"))
-                and os.path.exists(os.path.join(c, "jre", "bin", "java.exe"))):
-            return c
-    return IMAGEJ_CANDIDATES[0]
+    """兼容旧接口: 探测到的 ImageJ 安装目录; 找不到时返回首个候选 (沿用旧行为)."""
+    st = find_imagej()
+    if st["dir"]:
+        return st["dir"]
+    return imagej_dir_candidates()[0]
+
+
+def _macro_candidates(imagej_dir=None):
+    """宏文件候选 (打包/仓库副本优先, 安装目录副本其次)."""
+    out = []
+    env = os.environ.get("LABTOOLBOX_IMAGEJ_DIR", "").strip()
+    if env:
+        # env 可指向 ImageJ 安装目录, 也可指向 bundle 根 (含 imagej/ 与 scripts/)
+        out += [os.path.join(env, "macros", _MACRO_NAME),
+                os.path.join(env, "imagej", "macros", _MACRO_NAME),
+                os.path.join(env, "scripts", "imagej", _MACRO_NAME)]
+    for root in _bundle_roots():
+        out += [os.path.join(root, "scripts", "imagej", _MACRO_NAME),
+                os.path.join(root, "imagej", "macros", _MACRO_NAME)]
+    out += [os.path.join(_REPO_ROOT, "scripts", "imagej", _MACRO_NAME),
+            os.path.join(_REPO_ROOT, "imagej", "macros", _MACRO_NAME),
+            os.path.join(_REPO_ROOT, "vendor", "imagej", "macros", _MACRO_NAME)]
+    if imagej_dir:
+        out.append(os.path.join(imagej_dir, "macros", _MACRO_NAME))
+    out += [os.path.join(c, "macros", _MACRO_NAME) for c in IMAGEJ_CANDIDATES]
+    return _dedupe(out)
+
+
+def find_macro(imagej_dir=None):
+    """可用的 count_livedead.ijm 绝对路径; 找不到返回 None.
+
+    打包 app 只读, 所以宏从 bundle/仓库位置直接引用 (ImageJ -batch 接受任意
+    绝对路径), 不再复制进 ImageJ 安装目录.
+    """
+    for p in _macro_candidates(imagej_dir):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def imagej_status():
+    """GUI/诊断用: 一行探测结果 (dir/java/jar/macro/found + 探测过的候选)."""
+    st = find_imagej()
+    st["macro"] = find_macro(st["dir"])
+    st["found"] = bool(st["dir"] and st["java"])
+    return st
 
 
 # ==================== 计数引擎 (整合自 counter2.2.0) ====================
@@ -67,7 +218,9 @@ class ImageJEngine:
     引擎: 经典 ImageJ 1.54 headless (-batch), 目录级批处理 + 缓存。
     接口与 CellCounterEngine 对齐: count_live_dead(path) -> {'green','red'}
 
-    注意: 依赖经典 ImageJ 1.54 (默认 E:/ImageJ/ImageJ, 自动探测候选路径) 已安装; 宏文件需为纯 ASCII,
+    路径: 打包版用随包的 <bundle>/imagej/ij.jar + 平台对应 JRE (系统 Java 非必需);
+    源码运行依次探测 LABTOOLBOX_IMAGEJ_DIR、bundle/仓库/vendor 与旧安装路径。
+    宏 scripts/imagej/count_livedead.ijm 只读直接引用 (不复制进安装目录); 宏需为纯 ASCII,
     中文路径走 UTF-8 参数文件, Image-Pro 假校准会自动清除。
     """
 
@@ -84,28 +237,17 @@ class ImageJEngine:
 
     # -- 内部: 目录级 ImageJ 批处理 --
     def _macro_path(self):
-        """宏文件路径: ImageJ 安装目录优先; 缺失则从仓库 scripts/imagej/ 自动部署.
-        仓库副本: E:/LabToolbox/scripts/imagej/count_livedead.ijm (随 git 分发, 自包含)
+        """宏文件绝对路径 (只读直接引用, 不复制进 ImageJ 安装目录).
+
+        打包后 app bundle (.app / Program Files) 只读, 所以优先用 bundle/仓库里的
+        scripts/imagej/count_livedead.ijm, 其次才是 ImageJ 安装目录 macros/ 里已有
+        的副本; 都找不到时返回最可能的位置, 由 _batch_dir 给出可读报错。
         """
-        import shutil
-        inst = os.path.join(self.imagej_dir, "macros", "count_livedead.ijm")
-        if os.path.exists(inst):
-            return inst
-        # 仓库副本 (本文件 labtoolbox/livedead_cellcounter/ → 上三级 = 仓库根)
-        repo_macro = os.path.join(os.path.dirname(__file__), "..", "..", "..",
-                                  "scripts", "imagej", "count_livedead.ijm")
-        repo_macro = os.path.normpath(repo_macro)
-        if os.path.exists(repo_macro):
-            macros_dir = os.path.join(self.imagej_dir, "macros")
-            try:
-                os.makedirs(macros_dir, exist_ok=True)
-                shutil.copy2(repo_macro, inst)
-                print(f"ImageJ 宏已自动部署: {repo_macro} -> {inst}")
-                return inst
-            except OSError as e:
-                print(f"宏自动部署失败 ({e}), 改用仓库副本直读")
-                return repo_macro
-        return inst
+        found = find_macro(self.imagej_dir)
+        if found:
+            return found
+        cands = _macro_candidates(self.imagej_dir)
+        return cands[0] if cands else _MACRO_NAME
 
     def _batch_dir(self, directory):
         """跑一次 ImageJ 批处理整个目录, 填充缓存 {fname: count}"""
@@ -113,13 +255,16 @@ class ImageJEngine:
         macro = self._macro_path()
         if not os.path.exists(macro):
             raise FileNotFoundError(
-                f"ImageJ 宏不存在: {macro} — 需先部署 count_livedead.ijm "
-                f"(见 labtoolbox 技能 livedead-imagej-pipeline; 候选 {IMAGEJ_CANDIDATES})")
-        java = os.path.join(self.imagej_dir, "jre", "bin", "java.exe")
-        ij_jar = os.path.join(self.imagej_dir, "ij.jar")
-        if not os.path.exists(java) or not os.path.exists(ij_jar):
+                f"ImageJ 宏不存在: {macro} — 打包版应随包提供 "
+                f"scripts/imagej/count_livedead.ijm; 源码运行可设 LABTOOLBOX_IMAGEJ_DIR. "
+                f"候选: {_macro_candidates(self.imagej_dir)[:6]}")
+        java = find_java(self.imagej_dir)
+        ij_jar = find_imagej_jar(self.imagej_dir)
+        if not java or not ij_jar:
             raise FileNotFoundError(
-                f"ImageJ 未安装完整: {self.imagej_dir} (需要 ij.jar + jre/bin/java.exe)")
+                f"ImageJ 未安装完整: {self.imagej_dir} (需要 ij.jar + "
+                f"jre/bin/java.exe | jre/bin/java | jre/Contents/Home/bin/java) — "
+                f"候选: {imagej_dir_candidates()[:6]}")
         fd, args_path = tempfile.mkstemp(suffix=".txt", prefix="ij_args_")
         out_csv = args_path + ".csv"
         qc_sub = ""
@@ -566,8 +711,9 @@ def run(folder, output_dir="output", area_um2=None, backend="imagej",
     """一键 LIVE/DEAD 细胞计数分析
 
     backend: "imagej" (默认, 开源 ImageJ 引擎 — 自适应阈值+Analyze Particles,
-             经典 ImageJ 1.54, 装于 E:/ImageJ/ImageJ) / "opencv" (旧的 Python 分水岭引擎,
-             仅保留作故障排查/回归对照, 方法学上已被 ImageJ 取代)
+             经典 ImageJ 1.54; 打包版用随包 imagej/, 源码运行自动探测本地安装) /
+             "opencv" (旧的 Python 分水岭引擎, 仅保留作故障排查/回归对照,
+             方法学上已被 ImageJ 取代)
     skip_repeats: 跳过无效 repeat (如 ("repeat2",))
     """
     if backend == "imagej":
