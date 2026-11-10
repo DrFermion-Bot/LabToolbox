@@ -198,7 +198,7 @@ def _find_jre_root(extracted: Path, platform: str) -> tuple[Path, Path]:
     if not candidates:
         raise SystemExit("Contents/Home/bin/java not found in Temurin macOS JRE archive")
     java = min(candidates, key=lambda p: len(p.parts))
-    bundle = java.parent.parent.parent  # .../<name>.jre/Contents/Home/bin/java -> <name>.jre
+    bundle = java.parents[3]  # .../<name>.jre/Contents/Home/bin/java -> <name>.jre
     return bundle, java
 
 
