@@ -72,7 +72,7 @@ C_i = γ_Li (1 + cos θ_i)/2 − √( γ_S^LW · γ_Li^LW )
 C_i = √(γ_S^+)·√(γ_Li^-) + √(γ_S^-)·√(γ_Li^+)          (i = water, formamide)
 ```
 
-which is solved as the 2×2 system below; the module assembles `a11, a12 = √γ_w^-, √γ_w^+` and `a21, a22 = √γ_f^+, √γ_f^-` and solves for `[√γ_S^+; √γ_S^-]`:
+which is solved as the 2×2 system below; the module assembles `a11, a12 = √γ_w^-, √γ_w^+` and `a21, a22 = √γ_f^-, √γ_f^+` and solves for `[√γ_S^+; √γ_S^-]`:
 
 ```
 [ a11 a12 ] [ √γ_S^+ ]   [ C1 ]
@@ -80,7 +80,9 @@ which is solved as the 2×2 system below; the module assembles `a11, a12 = √γ
 ```
 
 then `γ_S^+ = u²`, `γ_S^- = v²`, `γ_S^AB = 2√(γ_S^+ γ_S^-)`, `γ_S^TOT = γ_S^LW + γ_S^AB`.
-**Known quirk at commit `0e0508e`:** the formamide row is built as `a21 = √(γ_f^+)`, `a22 = √(γ_f^-)` whereas the vOCG equation requires `a21 = √(γ_f^-)`, `a22 = √(γ_f^+)`. Because the water row is symmetric (`γ_w^+ = γ_w^- = 25.5`), this makes the solver return `γ_S^+` and `γ_S^-` **exchanged** (verified numerically: input `(γ^LW,γ^+,γ^-) = (40, 1, 20)` is returned as `(40, 20, 1)`; README angles 48.2/72.3/61.5° return `γ^+ = 15.52, γ^- = 0.00` instead of the correct `γ^+ ≈ 0, γ^- = 15.52`). `γ^LW` is unaffected. Negative square roots are silently squared, so an unphysical solution appears as a small positive component instead of an error.
+**Historical defect, fixed in the integration branch (commit `46bdd8f`):** at base commit `0e0508e` the formamide row was assembled as `a21 = √(γ_f^+)`, `a22 = √(γ_f^-)` instead of the vOCG-required `a21 = √(γ_f^-)`, `a22 = √(γ_f^+)`. Because the water row is symmetric (`γ_w^+ = γ_w^- = 25.5`), the solver then returned `γ_S^+` and `γ_S^-` **exchanged** — e.g. a surface with `(γ^LW, γ^+, γ^-) = (40, 1, 20)` mJ/m² came back as `(40, 20, 1)`.
+
+The integration branch fixes the row order and adds `tests/test_xdlvo_surface_energy.py` (run with `python -m unittest discover -s tests`): it round-trips three known surfaces (`(40, 1, 20)`, `(35, 0.1, 15)`, `(30, 5, 40)` mJ/m²) through forward and inverse vOCG to 1e-6 and pins the README example. With the fix, the README angles `48.2/72.3/61.5°` give `γ^LW = 35.2721`, `γ^+ = 0.00099`, `γ^- = 15.5236`, `γ^AB = 0.2479`, `γ^TOT = 35.5200 mJ/m²` — a physically sensible result (`γ^+` ≈ 0, so the acid–base term is small). `γ^LW` was never affected. The solver still squares negative square roots silently, so an unphysical contact-angle set can appear as a small positive component instead of raising.
 
 #### Free energy of adhesion at contact distance `h0`
 
@@ -143,9 +145,10 @@ Probe-liquid table (`PROBE_LIQUIDS`, `(γ^LW, γ^+, γ^-)` mJ/m²): diiodomethan
 
 ### Implementation notes
 
-* Package `labtoolbox/xdlvo/`: `xdlvo.py` (208 lines), `sei.py` (135 lines). Dependencies: NumPy + matplotlib (Agg) only; no SciPy.
+* Package `labtoolbox/xdlvo/`: `xdlvo.py` (210 lines), `sei.py` (135 lines). Dependencies: NumPy + matplotlib (Agg) only; no SciPy.
 * `SurfaceEnergy` is a `@dataclass` with `gamma_lw`, `gamma_plus`, `gamma_minus`, `gamma_ab`, `gamma_total` and a formatted `__repr__`.
 * Public functions: `water_dielectric`, `debye_length`, `surface_energy_from_contact_angles`, `delta_g`, `interaction_energy`, `analyze_profile`, `run`; re-exported by `labtoolbox.xdlvo.__init__`.
+* The vOCG formamide-row fix of integration commit `46bdd8f` is regression-tested in `tests/test_xdlvo_surface_energy.py`; no other part of the numerical model changed.
 * The embedded default bacterium is constructed inline in `run()`: `SurfaceEnergy(37.8, 0.6, 46.5, 2√(0.6·46.5), 37.8+2√(0.6·46.5))` — **the source does not cite where these *E. coli* values come from**; they are literature-like defaults, and users should substitute strain-specific measurements.
 * Other probe liquids in `PROBE_LIQUIDS` (glycerol, ethylene glycol) are defined but not used by the three-liquid solver.
 * CLI `labtoolbox xdlvo`; GUI tab **🧫 XDLVO**; the unified CLI registers `xdlvo` in `labtoolbox/cli.py`.
@@ -164,7 +167,7 @@ Functions: `dg_per_area(h_nm, dG, I_M=0.15, T_K=298.15, zeta_m=None, zeta_f=None
 
 ### Assumptions, limitations and known quirks
 
-* **Contact-angle-derived γ^+/γ^- are swapped** by the row-ordering defect described above. Because `ΔG_AB` is not symmetric in `γ^+` and `γ^-`, the ΔG values inherit the error when the material SFE comes from contact angles in this module. The embedded bacterium SFE is constructed directly and is not swapped.
+* **Acid–base components from contact angles are solved correctly on the release branch.** The base commit `0e0508e` had the formamide row order wrong and returned `γ⁺`/`γ⁻` exchanged (historical note above); integration commit `46bdd8f` fixes the row and adds a regression test, so no manual swap is needed. The embedded bacterium SFE was always constructed directly and was never affected.
 * **Sphere–plane geometry only.** `U(h)` uses the Derjaguin approximation (`R ≫ h`); it is a poor approximation for very small particles (`R` ≈ nm) or thick electrical double layers. The EL term is the constant-potential HHF form; constant-charge conditions are not modelled.
 * **Flat, rigid, smooth surfaces** for `U(h)`; roughness requires the `sei.py` extension.
 * **`ΔG` constants are temperature-independent**; only the dielectric constant/Debye length depend on `T`.
@@ -176,7 +179,8 @@ Functions: `dg_per_area(h_nm, dG, I_M=0.15, T_K=298.15, zeta_m=None, zeta_f=None
 ### QC and validation
 
 * `scripts/xdlvo_unit_check.py` compares the module's `U(h)` at contact with an independent analytic Derjaguin implementation for two chemistries (repulsive/attractive) and two radii (450 nm cell, 3.5 nm protein): PASS when the R ≥ 100 nm cases agree within 1%; the R = 3.5 nm O(λ/R) deviation is reported but not failed.
-* Reproduced for this documentation (Python 3.11 / NumPy 2.4) with `I = 0.15 M`, `T = 310.15 K`, ζ = (−25, −13) mV: `ΔG_LW = −4.897`, `ΔG_AB = 9.392`, `ΔG_EL = 0.00377`, `ΔG_ADH = 4.495 mJ/m²`; at the first grid point (`h = 0.15 nm`) `U_TOT = 3740.6 kT` equals the independent LW+AB analytic value plus the analytic EL value. `sei_sphere_on_flat` reproduces the numerical Derjaguin integral to 0.04%.
+* `tests/test_xdlvo_surface_energy.py` (integration branch) guards the corrected SFE solver: three forward/inverse vOCG round-trips at six-decimal precision plus the README-angle acid–base split; it was added together with fix `46bdd8f`.
+* Reproduced for this documentation at the base commit (Python 3.11 / NumPy 2.4; this interaction-energy code is unchanged by the fix) with `I = 0.15 M`, `T = 310.15 K`, ζ = (−25, −13) mV: `ΔG_LW = −4.897`, `ΔG_AB = 9.392`, `ΔG_EL = 0.00377`, `ΔG_ADH = 4.495 mJ/m²`; at the first grid point (`h = 0.15 nm`) `U_TOT = 3740.6 kT` equals the independent LW+AB analytic value plus the analytic EL value. `sei_sphere_on_flat` reproduces the numerical Derjaguin integral to 0.04%.
 * No automated comparison against experimental adhesion data is built in; XDLVO predictions are thermodynamic tendencies, not measured adhesion forces.
 
 ### References
@@ -262,7 +266,7 @@ C_i = γ_Li (1 + cos θ_i)/2 − √( γ_S^LW · γ_Li^LW )
 C_i = √(γ_S^+)·√(γ_Li^-) + √(γ_S^-)·√(γ_Li^+)          (i = 水, 甲酰胺)
 ```
 
-模块组装的 2×2 方程组为 `a11, a12 = √γ_w^-, √γ_w^+`、`a21, a22 = √γ_f^+, √γ_f^-`，解 `[√γ_S^+; √γ_S^-]`：
+模块组装的 2×2 方程组为 `a11, a12 = √γ_w^-, √γ_w^+`、`a21, a22 = √γ_f^-, √γ_f^+`，解 `[√γ_S^+; √γ_S^-]`：
 
 ```
 [ a11 a12 ] [ √γ_S^+ ]   [ C1 ]
@@ -270,7 +274,9 @@ C_i = √(γ_S^+)·√(γ_Li^-) + √(γ_S^-)·√(γ_Li^+)          (i = 水, �
 ```
 
 然后 `γ_S^+ = u²`、`γ_S^- = v²`、`γ_S^AB = 2√(γ_S^+ γ_S^-)`、`γ_S^TOT = γ_S^LW + γ_S^AB`。
-**commit `0e0508e` 的已知怪癖：** 甲酰胺行被写成 `a21 = √(γ_f^+)`、`a22 = √(γ_f^-)`，而 vOCG 方程要求 `a21 = √(γ_f^-)`、`a22 = √(γ_f^+)`。由于水行对称（`γ_w^+ = γ_w^- = 25.5`），求解器返回的 `γ_S^+` 与 `γ_S^-` 是**互换**的（数值验证：输入 `(γ^LW,γ^+,γ^-) = (40, 1, 20)` 返回 `(40, 20, 1)`；README 角度 48.2/72.3/61.5° 返回 `γ^+ = 15.52, γ^- = 0.00`，而正确解为 `γ^+ ≈ 0, γ^- = 15.52`）。`γ^LW` 不受影响。负的平方根被静默平方，因此非物理解会表现为一个小的正分量而不是报错。
+**历史缺陷（已在集成分支 commit `46bdd8f` 修复）：** 基线 commit `0e0508e` 把甲酰胺行组装为 `a21 = √(γ_f^+)`、`a22 = √(γ_f^-)`，而 vOCG 方程要求 `a21 = √(γ_f^-)`、`a22 = √(γ_f^+)`。由于水行对称（`γ_w^+ = γ_w^- = 25.5`），求解器返回的 `γ_S^+` 与 `γ_S^-` 是**互换**的——例如 `(γ^LW, γ^+, γ^-) = (40, 1, 20)` mJ/m² 的表面会返回 `(40, 20, 1)`。
+
+集成分支修正了行序，并新增 `tests/test_xdlvo_surface_energy.py`（运行 `python -m unittest discover -s tests`）：用三组已知表面（`(40, 1, 20)`、`(35, 0.1, 15)`、`(30, 5, 40)` mJ/m²）做正/反 vOCG 往返，精度 1e-6，并钉住 README 示例。修复后 README 角度 `48.2/72.3/61.5°` 得到 `γ^LW = 35.2721`、`γ^+ = 0.00099`、`γ^- = 15.5236`、`γ^AB = 0.2479`、`γ^TOT = 35.5200 mJ/m²`——物理上合理（`γ^+` ≈ 0，酸碱项很小）。`γ^LW` 从来不受影响。求解器仍会静默平方负的平方根，因此非物理的接触角组合可能表现为一个小的正分量而不是报错。
 
 #### 接触距离 `h0` 处的黏附自由能
 
@@ -333,9 +339,10 @@ U_TOT = U_LW + U_AB + U_EL
 
 ### 实现说明
 
-* 包 `labtoolbox/xdlvo/`：`xdlvo.py`（208 行）、`sei.py`（135 行）。依赖仅 NumPy + matplotlib（Agg），不用 SciPy。
+* 包 `labtoolbox/xdlvo/`：`xdlvo.py`（210 行）、`sei.py`（135 行）。依赖仅 NumPy + matplotlib（Agg），不用 SciPy。
 * `SurfaceEnergy` 为 `@dataclass`，字段 `gamma_lw`、`gamma_plus`、`gamma_minus`、`gamma_ab`、`gamma_total`，带格式化 `__repr__`。
 * 公开函数：`water_dielectric`、`debye_length`、`surface_energy_from_contact_angles`、`delta_g`、`interaction_energy`、`analyze_profile`、`run`；由 `labtoolbox.xdlvo.__init__` 再导出。
+* 集成分支 commit `46bdd8f` 的 vOCG 甲酰胺行修正由 `tests/test_xdlvo_surface_energy.py` 回归测试守护；数值模型的其余部分未改动。
 * 内嵌默认细菌直接在 `run()` 里构造：`SurfaceEnergy(37.8, 0.6, 46.5, 2√(0.6·46.5), 37.8+2√(0.6·46.5))`——**源码没有注明这些 *E. coli* 值的出处**；它们是类文献默认值，定量使用时应替换为实测菌株参数。
 * `PROBE_LIQUIDS` 中的甘油、乙二醇虽已定义，但三液求解器不使用。
 * 命令行 `labtoolbox xdlvo`；GUI 标签页 **🧫 XDLVO**；统一 CLI 在 `labtoolbox/cli.py` 注册 `xdlvo` 子命令。
@@ -354,7 +361,7 @@ U = ∫∫ ΔG( h(x,y) ) dA
 
 ### 假设、局限与已知怪癖
 
-* **接触角导出的 γ^+/γ^- 互换**（上述行序缺陷）。由于 `ΔG_AB` 对 `γ^+`、`γ^-` 不对称，若材料 SFE 来自本模块的接触角求解，ΔG 会继承该误差。内嵌细菌 SFE 是直接构造的，不受影响。
+* **发布分支上接触角导出的酸碱分量已正确求解。** 基线 commit `0e0508e` 的甲酰胺行序有误，会返回互换的 `γ⁺`/`γ⁻`（见上方历史说明）；集成分支 commit `46bdd8f` 已修正并加入回归测试，不再需要手工交换。内嵌细菌 SFE 一直是直接构造的，从未受影响。
 * **仅球–平面几何。** `U(h)` 用 Derjaguin 近似（`R ≫ h`）；对极小颗粒（`R` 约 nm）或厚双电层偏差大。EL 项为恒电位 HHF 式，不建模恒电荷条件。
 * 对 `U(h)` 假设**平面、刚性、光滑表面**；粗糙度需用 `sei.py` 扩展。
 * **`ΔG` 常数与温度无关**；只有介电常数/Debye 长度随 `T` 变化。
@@ -366,7 +373,8 @@ U = ∫∫ ΔG( h(x,y) ) dA
 ### 质控与验证
 
 * `scripts/xdlvo_unit_check.py` 把模块在接触处的 `U(h)` 与独立解析 Derjaguin 实现对比：两种化学（排斥/吸引）× 两个尺度（450 nm 细胞、3.5 nm 蛋白）；`R ≥ 100 nm` 的算例偏差 < 1% 判 PASS；`R = 3.5 nm` 的 O(λ/R) 偏差只报告不判失败。
-* 本文档核对（Python 3.11 / NumPy 2.4，`I = 0.15 M`、`T = 310.15 K`、ζ = (−25, −13) mV）：`ΔG_LW = −4.897`、`ΔG_AB = 9.392`、`ΔG_EL = 0.00377`、`ΔG_ADH = 4.495 mJ/m²`；第一个网格点（`h = 0.15 nm`）`U_TOT = 3740.6 kT`，与独立 LW+AB 解析值加解析 EL 值一致。`sei_sphere_on_flat` 与数值 Derjaguin 积分吻合到 0.04%。
+* `tests/test_xdlvo_surface_energy.py`（集成分支）守护修正后的 SFE 求解器：三组正/反 vOCG 往返（六位小数）加 README 角度的酸碱拆分；该测试与修复 `46bdd8f` 一同加入。
+* 本文档在基线上的核对（Python 3.11 / NumPy 2.4；相互作用能代码未受该修复影响，`I = 0.15 M`、`T = 310.15 K`、ζ = (−25, −13) mV）：`ΔG_LW = −4.897`、`ΔG_AB = 9.392`、`ΔG_EL = 0.00377`、`ΔG_ADH = 4.495 mJ/m²`；第一个网格点（`h = 0.15 nm`）`U_TOT = 3740.6 kT`，与独立 LW+AB 解析值加解析 EL 值一致。`sei_sphere_on_flat` 与数值 Derjaguin 积分吻合到 0.04%。
 * 未内建与实验黏附数据的自动对比；XDLVO 预测的是热力学倾向，不是实测黏附力。
 
 ### 参考文献

@@ -145,7 +145,7 @@ CLI `labtoolbox sem-texture --folder … [--pixel-nm …] [--tile-um …] [--til
 * Package `labtoolbox/semtexture/`: `texture.py` (1093 lines); dependencies NumPy, SciPy (`ndimage`: gaussian filters, rotate, label, grey/binary opening), pandas, matplotlib (Agg; `ListedColormap`, `BoundaryNorm`), Pillow (grayscale loading). No OpenCV, no ImageJ.
 * Public API: `run`, `analyse_image`, `annotate_image`, `annotate_folder`, `_discover`, `_load_gray`, `_crop_scalebar`, `quality_rgba`, `DEFAULT_QC`, `DEFAULT_CRITERIA`, `DEFAULT_PIXEL_NM`, `BAND_NM`, `DEFAULT_TILE_UM` (exported by `__init__`).
 * Per-image figure and per-group summary are drawn with `matplotlib` only; the markdown report uses Chinese headings and English parameter names.
-* At commit `0e0508e` the package is importable from the source tree and wired into the CLI/GUI, but it is **not listed in `pyproject.toml`'s `packages`** (a packaging gap of that commit).
+* The package is listed in `pyproject.toml`'s `packages` (added by the integration PR), so `pip install` and the PyInstaller desktop app include it; it was already wired into the unified CLI (`sem-texture`) and the GUI tab **🧭 Texture Consistency**.
 * Complexity is driven by the per-tile loop: each valid tile computes a structure tensor, a rotated profile and two period estimates; typical 3 k images with 2 µm windows (64 px) give ~15–60 tiles per field.
 
 ### Assumptions, limitations and known quirks
@@ -324,7 +324,7 @@ R     = |Σ w_j e^{i·2θ_j}| / Σ w_j
 * 包 `labtoolbox/semtexture/`：`texture.py`（1093 行）；依赖 NumPy、SciPy（`ndimage`：高斯滤波、rotate、label、grey/binary opening）、pandas、matplotlib（Agg；`ListedColormap`、`BoundaryNorm`）、Pillow（灰度读取）。不用 OpenCV，不用 ImageJ。
 * 公开 API：`run`、`analyse_image`、`annotate_image`、`annotate_folder`、`_discover`、`_load_gray`、`_crop_scalebar`、`quality_rgba`、`DEFAULT_QC`、`DEFAULT_CRITERIA`、`DEFAULT_PIXEL_NM`、`BAND_NM`、`DEFAULT_TILE_UM`（由 `__init__` 导出）。
 * 逐图图与分组汇总图只用 `matplotlib`；markdown 报告用中文标题、英文参数名。
-* commit `0e0508e` 时该包可从源码树导入并已接入 CLI/GUI，但**未列入 `pyproject.toml` 的 `packages`**（该 commit 的打包缺口）。
+* 该包已列入 `pyproject.toml` 的 `packages`（集成 PR 加入），因此 `pip install` 与 PyInstaller 桌面应用都会包含它；它此前已接入统一 CLI（`sem-texture`）与 GUI 标签页 **🧭 织构一致性**。
 * 复杂度由逐分块循环决定：每个有效分块都算一次结构张量、一个旋转剖面和两次周期估计；典型 3k 图 + 2 µm 窗（64 px）每视野约 15–60 块。
 
 ### 假设、局限与已知怪癖
