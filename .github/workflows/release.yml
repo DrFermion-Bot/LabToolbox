@@ -189,6 +189,10 @@ jobs:
           # Contents/Frameworks. `codesign --deep` trips over those symlinks, so sign
           # the app wrapper and verify it without deep bundle traversal. Nested JRE and
           # Python binaries keep their upstream signatures; the wrapper gets an ad-hoc one.
+          # Sign the bundled JRE bundle first: PyInstaller splits its data, so the
+          # JRE has no valid bundle signature and the app signature would report it
+          # as an unsigned subcomponent.
+          codesign --force --sign - dist/LabToolbox.app/Contents/Frameworks/imagej/jre
           codesign --force --sign - dist/LabToolbox.app
           codesign --verify --strict --verbose=2 dist/LabToolbox.app
           echo "Ad-hoc signature OK (not notarized; users must right-click > Open on first launch)"
